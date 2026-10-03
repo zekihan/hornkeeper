@@ -241,8 +241,10 @@ Longhorn and test backup targets. See [docs/testing.md](docs/testing.md).
 
 GitHub Actions checks formatting/modules, lint, race tests, API-server integration,
 builds, release configuration and container startup. A `v*` tag runs GoReleaser
-for Linux/macOS amd64/arm64 archives and a separate GHCR container workflow for
-Linux amd64/arm64. GHCR visibility is managed separately from repository visibility;
+for Linux/macOS amd64/arm64 archives and a separate Docker Hub/GHCR container workflow for
+Linux amd64/arm64. Docker Hub publishing uses the repository secrets
+`DOCKER_USERNAME` and `DOCKER_PASSWORD`; GHCR uses the built-in `GITHUB_TOKEN`.
+Registry visibility is managed separately from repository visibility;
 keep the package private. There is no Docker Hub README synchronization for this
 private repository. Publishing and deployment are separate actions.
 
