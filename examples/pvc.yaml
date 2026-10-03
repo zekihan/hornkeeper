@@ -1,0 +1,15 @@
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: application-data
+  namespace: default
+  labels:
+    hornkeeper.noqer.com/enabled: "true"
+    hornkeeper.noqer.com/backup-target: rustfs
+    hornkeeper.noqer.com/replicas: "2"
+spec:
+  accessModes: [ReadWriteOnce]
+  storageClassName: longhorn
+  resources:
+    requests:
+      storage: 5Gi

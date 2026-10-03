@@ -1,0 +1,85 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: hornkeeper
+  namespace: hornkeeper
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: hornkeeper
+rules:
+  - apiGroups: [""]
+    resources: [persistentvolumeclaims, persistentvolumes]
+    verbs: [get, list, watch]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: hornkeeper
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: hornkeeper
+subjects:
+  - kind: ServiceAccount
+    name: hornkeeper
+    namespace: hornkeeper
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: hornkeeper-longhorn
+  namespace: longhorn
+rules:
+  - apiGroups: [longhorn.io]
+    resources: [volumes]
+    verbs: [get, list, watch, patch]
+  - apiGroups: [longhorn.io]
+    resources: [backuptargets]
+    verbs: [get, list, watch]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: hornkeeper-longhorn
+  namespace: longhorn
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: hornkeeper-longhorn
+subjects:
+  - kind: ServiceAccount
+    name: hornkeeper
+    namespace: hornkeeper
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: hornkeeper-leader
+  namespace: hornkeeper
+rules:
+  - apiGroups: [coordination.k8s.io]
+    resources: [leases]
+    verbs: [create]
+  - apiGroups: [coordination.k8s.io]
+    resources: [leases]
+    resourceNames: [hornkeeper.noqer.com]
+    verbs: [get, update]
+  - apiGroups: [""]
+    resources: [events]
+    verbs: [create, patch]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: hornkeeper-leader
+  namespace: hornkeeper
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: hornkeeper-leader
+subjects:
+  - kind: ServiceAccount
+    name: hornkeeper
+    namespace: hornkeeper

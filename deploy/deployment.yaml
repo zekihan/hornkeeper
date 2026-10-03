@@ -1,0 +1,68 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: hornkeeper
+  namespace: hornkeeper
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: hornkeeper
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: hornkeeper
+    spec:
+      serviceAccountName: hornkeeper
+      terminationGracePeriodSeconds: 30
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 25000
+        runAsGroup: 25000
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: hornkeeper
+          image: ghcr.io/zekihan/hornkeeper:0.1.0
+          args:
+            - --longhorn-namespace=longhorn
+            - --default-backup-target=default
+            - --default-replicas=3
+            - --leader-elect=true
+            - --leader-election-namespace=hornkeeper
+            - --resync-interval=1m
+            - --metrics-bind-address=:8080
+            - --health-probe-bind-address=:8081
+            - --log-level=info
+          ports:
+            - name: metrics
+              containerPort: 8080
+            - name: health
+              containerPort: 8081
+          startupProbe:
+            httpGet:
+              path: /healthz
+              port: health
+            periodSeconds: 5
+            failureThreshold: 12
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: health
+            periodSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: health
+            periodSeconds: 5
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              memory: 256Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
