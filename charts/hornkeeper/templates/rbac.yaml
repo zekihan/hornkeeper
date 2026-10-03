@@ -1,0 +1,95 @@
+{{- if .Values.rbac.create }}
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ include "hornkeeper.rbacName" . }}
+  labels:
+    {{- include "hornkeeper.labels" . | nindent 4 }}
+rules:
+  - apiGroups: [""]
+    resources: [persistentvolumeclaims, persistentvolumes]
+    verbs: [get, list, watch]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ include "hornkeeper.rbacName" . }}
+  labels:
+    {{- include "hornkeeper.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ include "hornkeeper.rbacName" . }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "hornkeeper.serviceAccountName" . }}
+    namespace: {{ .Release.Namespace }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ include "hornkeeper.rbacName" . }}-longhorn
+  namespace: {{ .Values.controller.longhornNamespace }}
+  labels:
+    {{- include "hornkeeper.labels" . | nindent 4 }}
+rules:
+  - apiGroups: [longhorn.io]
+    resources: [volumes]
+    verbs: [get, list, watch, patch]
+  - apiGroups: [longhorn.io]
+    resources: [backuptargets]
+    verbs: [get, list, watch]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ include "hornkeeper.rbacName" . }}-longhorn
+  namespace: {{ .Values.controller.longhornNamespace }}
+  labels:
+    {{- include "hornkeeper.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ include "hornkeeper.rbacName" . }}-longhorn
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "hornkeeper.serviceAccountName" . }}
+    namespace: {{ .Release.Namespace }}
+{{- if .Values.controller.leaderElection }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ include "hornkeeper.fullname" . }}-leader
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "hornkeeper.labels" . | nindent 4 }}
+rules:
+  - apiGroups: [coordination.k8s.io]
+    resources: [leases]
+    verbs: [create]
+  - apiGroups: [coordination.k8s.io]
+    resources: [leases]
+    resourceNames: [hornkeeper.noqer.com]
+    verbs: [get, update]
+  - apiGroups: [""]
+    resources: [events]
+    verbs: [create, patch]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ include "hornkeeper.fullname" . }}-leader
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "hornkeeper.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ include "hornkeeper.fullname" . }}-leader
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "hornkeeper.serviceAccountName" . }}
+    namespace: {{ .Release.Namespace }}
+{{- end }}
+{{- end }}

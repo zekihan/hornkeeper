@@ -1,0 +1,8 @@
+hornkeeper watches PVCs across the cluster and manages only claims labelled
+hornkeeper.noqer.com/enabled="true".
+
+Longhorn must exist in {{ .Values.controller.longhornNamespace }} and backup
+target {{ .Values.controller.defaultBackupTarget }} must already exist.
+
+Check readiness:
+  kubectl -n {{ .Release.Namespace }} rollout status deployment/{{ include "hornkeeper.fullname" . }}

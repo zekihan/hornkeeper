@@ -3,7 +3,7 @@
 A small Go Kubernetes controller that keeps opted-in Longhorn volumes' backup
 target and desired replica count in sync with PVC labels. It manages existing and
 restored volumes as well as newly bound claims. It uses Longhorn's existing API;
-there are no hornkeeper CRDs, deployment hooks or Helm chart.
+there are no hornkeeper CRDs or deployment hooks.
 
 ## Labels
 
@@ -81,11 +81,30 @@ structured diagnostic. Changing deployment defaults changes every enabled PVC
 that has no corresponding override. Defaults do not inherit StorageClass or
 Longhorn global settings.
 
+## Helm installation
+
+[charts/hornkeeper/](charts/hornkeeper/) contains the application chart, published
+as an OCI package alongside releases. The chart and application image are public.
+Longhorn and the selected backup target must already exist.
+
+```sh
+helm upgrade --install hornkeeper oci://ghcr.io/zekihan/charts/hornkeeper \
+  --version 0.1.0 --namespace hornkeeper --create-namespace \
+  --set controller.defaultBackupTarget=rustfs \
+  --set controller.defaultReplicas=2
+```
+
+The chart exposes controller defaults, replica count, image tag/digest, resources,
+scheduling, RBAC and metrics settings. Leader election and its permissions use the
+release namespace; Longhorn permissions follow `controller.longhornNamespace`.
+Install one release per cluster. See the [chart README](charts/hornkeeper/README.md)
+for all settings and requirements.
+
 ## Kubernetes example
 
 [deploy/](deploy/) contains plain manifests and a Kustomize entrypoint; the image
 reference is an example and must be replaced with an image you have built and
-published. No image has been published as part of this repository setup.
+published.
 
 Before applying the example, set the image, controller defaults and namespace
 arguments. If Longhorn uses another namespace, change both the argument and the
@@ -240,13 +259,18 @@ in-progress backup behavior require a separate disposable Linux cluster with
 Longhorn and test backup targets. See [docs/testing.md](docs/testing.md).
 
 GitHub Actions checks formatting/modules, lint, race tests, API-server integration,
-builds, release configuration and container startup. A `v*` tag runs GoReleaser
-for Linux/macOS amd64/arm64 archives and a separate Docker Hub/GHCR container workflow for
-Linux amd64/arm64. Docker Hub publishing uses the repository secrets
+builds, release configuration, container startup and chart render tests. Run
+`make chart-package` with Helm and the Python dependencies from
+`tests/helm/requirements.txt` to validate and package the chart locally.
+A `v*` tag matching `VERSION` runs GoReleaser for Linux/macOS amd64/arm64 archives
+and a separate Docker Hub/GHCR container workflow for Linux amd64/arm64. Once
+container publishing succeeds, that workflow publishes the OCI Helm chart to
+`ghcr.io/zekihan/charts/hornkeeper`, with matching chart and application versions.
+Docker Hub publishing uses the repository secrets
 `DOCKER_USERNAME` and `DOCKER_PASSWORD`; GHCR uses the built-in `GITHUB_TOKEN`.
-Registry visibility is managed separately from repository visibility;
-keep the package private. There is no Docker Hub README synchronization for this
-private repository. Publishing and deployment are separate actions.
+Registry visibility is managed separately from repository visibility; release
+packages are public. There is no Docker Hub README synchronization.
+Publishing and deployment are separate actions.
 
 ## License
 
