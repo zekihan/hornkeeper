@@ -15,7 +15,7 @@ archives:
   - id: all
     ids: [all]
     formats: [tar.gz]
-    files: [LICENSE, README.md, deploy/**, examples/**, docs/**]
+    files: [LICENSE, README.md, deploy/**, examples/**, docs/**, charts/hornkeeper/**]
 checksum:
   name_template: checksums.txt
 changelog:
