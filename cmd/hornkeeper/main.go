@@ -99,6 +99,11 @@ func run() error {
 	if err := controller.CheckBackupTarget(startupCtx, mgr.GetAPIReader(), cfg.LonghornNamespace, cfg.BackupTarget); err != nil {
 		return fmt.Errorf("validate default backup target at startup: %w", err)
 	}
+	// Verify Longhorn namespace exists.
+	ns := &corev1.Namespace{}
+	if err := mgr.GetAPIReader().Get(startupCtx, client.ObjectKey{Name: cfg.LonghornNamespace}, ns); err != nil {
+		return fmt.Errorf("validate Longhorn namespace %q at startup: %w", cfg.LonghornNamespace, err)
+	}
 	r := &controller.Reconciler{Client: mgr.GetClient(), Reader: mgr.GetAPIReader(), Config: cfg, Metrics: controller.NewMetrics(metrics.Registry)}
 	if err := r.SetupWithManager(ctx, mgr); err != nil {
 		return fmt.Errorf("set up watches: %w", err)
