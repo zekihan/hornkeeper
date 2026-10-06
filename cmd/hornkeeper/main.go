@@ -119,7 +119,7 @@ func run() error {
 		return err
 	}
 	// Warn if metrics are exposed on non-localhost without authentication.
-	if cfg.MetricsAddress != "0" && cfg.MetricsAddress != ":8080" && !strings.HasPrefix(cfg.MetricsAddress, "127.0.0.1:") && !strings.HasPrefix(cfg.MetricsAddress, "[::1]:") && !strings.HasPrefix(cfg.MetricsAddress, "localhost:") {
+	if cfg.MetricsAddress != "0" && !strings.HasPrefix(cfg.MetricsAddress, "127.0.0.1:") && !strings.HasPrefix(cfg.MetricsAddress, "[::1]:") && !strings.HasPrefix(cfg.MetricsAddress, "localhost:") {
 		slog.WarnContext(ctx, "Metrics endpoint exposed on non-localhost address without authentication; consider restricting network access", "address", cfg.MetricsAddress)
 	}
 	slog.InfoContext(ctx, "Starting hornkeeper", "version", version, "longhornNamespace", cfg.LonghornNamespace,
