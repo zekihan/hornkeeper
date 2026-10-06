@@ -25,7 +25,7 @@ serviceAccount:
   annotations: {}
 
 metrics:
-  enabled: true
+  enabled: false
 
 podAnnotations: {}
 podSecurityContext:

@@ -31,7 +31,7 @@ spec:
             - --leader-elect=true
             - --leader-election-namespace=hornkeeper
             - --resync-interval=1m
-            - --metrics-bind-address=:8080
+            - --metrics-bind-address=0
             - --health-probe-bind-address=:8081
             - --log-level=info
           ports:

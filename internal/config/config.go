@@ -27,7 +27,7 @@ func Default() Config {
 		ResyncInterval:    time.Minute,
 		LeaderElection:    true,
 		LeaderNamespace:   "hornkeeper",
-		MetricsAddress:    ":8080",
+		MetricsAddress:    "0",
 		HealthAddress:     ":8081",
 	}
 }
