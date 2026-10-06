@@ -54,8 +54,11 @@ func (c Config) Validate() error {
 }
 
 func ValidateBackupTarget(name string) error {
-	if errs := validation.IsDNS1123Subdomain(name); len(errs) != 0 {
-		return fmt.Errorf("backup target must be a valid DNS-1123 subdomain: %s", strings.Join(errs, "; "))
+	if name == "" {
+		return fmt.Errorf("backup target must not be empty")
+	}
+	if errs := validation.IsValidLabelValue(name); len(errs) != 0 {
+		return fmt.Errorf("backup target must be a valid Kubernetes label value: %s", strings.Join(errs, "; "))
 	}
 	return nil
 }

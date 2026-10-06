@@ -71,6 +71,7 @@ func newFixture(t *testing.T) *fixture {
 		WithStatusSubresource(f.pvc, f.pv).
 		WithIndex(&corev1.PersistentVolumeClaim{}, claimVolumeIndex, ClaimVolumeIndex).
 		WithIndex(&corev1.PersistentVolume{}, volumeHandleIndex, VolumeHandleIndex).
+		WithIndex(&corev1.PersistentVolumeClaim{}, claimBackupTargetIndex, ClaimBackupTargetIndex).
 		WithInterceptorFuncs(interceptor.Funcs{Patch: func(ctx context.Context, c client.WithWatch, obj client.Object, patch client.Patch, opts ...client.PatchOption) error {
 			f.patches++
 			data, err := patch.Data(obj)
@@ -464,10 +465,29 @@ func TestEventMapping(t *testing.T) {
 	if got := f.r.ClaimsForVolume(ctx, otherNamespace); len(got) != 0 {
 		t.Fatal("mapped foreign namespace")
 	}
+	// Create a PVC with the backup target label to test ClaimsForTarget field index.
+	pvcWithLabel := &corev1.PersistentVolumeClaim{
+		ObjectMeta: metav1.ObjectMeta{Name: "claim-with-label", Namespace: "app", UID: "claim-uid-2", Labels: map[string]string{EnabledLabel: "true", BackupTargetLabel: "default"}},
+		Spec:       corev1.PersistentVolumeClaimSpec{VolumeName: "pv"},
+		Status:     corev1.PersistentVolumeClaimStatus{Phase: corev1.ClaimBound},
+	}
+	if err := f.c.Create(ctx, pvcWithLabel); err != nil {
+		t.Fatal(err)
+	}
 	target := Resource(BackupTargetGVK)
 	target.SetNamespace("longhorn")
-	if got := f.r.ClaimsForTarget(ctx, target); !reflect.DeepEqual(got, want) {
+	target.SetName("default")
+	wantWithLabel := []ctrl.Request{{NamespacedName: types.NamespacedName{Namespace: "app", Name: "claim-with-label"}}}
+	if got := f.r.ClaimsForTarget(ctx, target); !reflect.DeepEqual(got, wantWithLabel) {
 		t.Fatalf("target map: %v", got)
+	}
+	// Disable the PVC and verify it's no longer mapped.
+	pvcWithLabel.Labels = nil
+	if err := f.c.Update(ctx, pvcWithLabel); err != nil {
+		t.Fatal(err)
+	}
+	if got := f.r.ClaimsForTarget(ctx, target); len(got) != 0 {
+		t.Fatal("mapped disabled target")
 	}
 	f.labels(t, nil)
 	if got := f.r.ClaimsForPV(ctx, f.pv); len(got) != 0 {
@@ -475,9 +495,6 @@ func TestEventMapping(t *testing.T) {
 	}
 	if got := f.r.ClaimsForVolume(ctx, f.volume); len(got) != 0 {
 		t.Fatal("mapped disabled volume")
-	}
-	if got := f.r.ClaimsForTarget(ctx, target); len(got) != 0 {
-		t.Fatal("mapped disabled target")
 	}
 }
 

@@ -15,8 +15,9 @@ import (
 )
 
 const (
-	claimVolumeIndex  = "hornkeeper.pvc.volumeName"
-	volumeHandleIndex = "hornkeeper.pv.volumeHandle"
+	claimVolumeIndex    = "hornkeeper.pvc.volumeName"
+	volumeHandleIndex   = "hornkeeper.pv.volumeHandle"
+	claimBackupTargetIndex = "hornkeeper.pvc.backupTarget"
 )
 
 func ClaimVolumeIndex(obj client.Object) []string {
@@ -35,11 +36,22 @@ func VolumeHandleIndex(obj client.Object) []string {
 	return []string{pv.Spec.CSI.VolumeHandle}
 }
 
+func ClaimBackupTargetIndex(obj client.Object) []string {
+	pvc := obj.(*corev1.PersistentVolumeClaim)
+	if value, exists := pvc.Labels[BackupTargetLabel]; exists && value != "" {
+		return []string{value}
+	}
+	return nil
+}
+
 func (r *Reconciler) SetupWithManager(ctx context.Context, mgr ctrl.Manager) error {
 	if err := mgr.GetFieldIndexer().IndexField(ctx, &corev1.PersistentVolumeClaim{}, claimVolumeIndex, ClaimVolumeIndex); err != nil {
 		return err
 	}
 	if err := mgr.GetFieldIndexer().IndexField(ctx, &corev1.PersistentVolume{}, volumeHandleIndex, VolumeHandleIndex); err != nil {
+		return err
+	}
+	if err := mgr.GetFieldIndexer().IndexField(ctx, &corev1.PersistentVolumeClaim{}, claimBackupTargetIndex, ClaimBackupTargetIndex); err != nil {
 		return err
 	}
 	for _, obj := range []client.Object{Resource(VolumeGVK), Resource(BackupTargetGVK)} {
@@ -94,8 +106,8 @@ func (r *Reconciler) ClaimsForTarget(ctx context.Context, obj client.Object) []r
 		return nil
 	}
 	claims := &corev1.PersistentVolumeClaimList{}
-	if err := r.Client.List(ctx, claims, client.MatchingLabels{EnabledLabel: "true"}); err != nil {
-		ctrl.LoggerFrom(ctx).Error(err, "Cannot map backup target event to PVCs")
+	if err := r.Client.List(ctx, claims, client.MatchingFields{claimBackupTargetIndex: obj.GetName()}, client.MatchingLabels{EnabledLabel: "true"}); err != nil {
+		ctrl.LoggerFrom(ctx).Error(err, "Cannot map backup target event to PVCs", "target", obj.GetName())
 		return nil
 	}
 	return claimRequests(claims)

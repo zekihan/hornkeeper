@@ -13,7 +13,7 @@ func TestValidate(t *testing.T) {
 		{"empty namespace", func(c *Config) { c.LonghornNamespace = "" }},
 		{"invalid namespace", func(c *Config) { c.LonghornNamespace = "Not-valid" }},
 		{"empty target", func(c *Config) { c.BackupTarget = "" }},
-		{"invalid target", func(c *Config) { c.BackupTarget = "bad_target" }},
+		{"invalid target", func(c *Config) { c.BackupTarget = "with space" }},
 		{"zero replicas", func(c *Config) { c.Replicas = 0 }},
 		{"excess replicas", func(c *Config) { c.Replicas = 21 }},
 		{"zero interval", func(c *Config) { c.ResyncInterval = 0 }},
