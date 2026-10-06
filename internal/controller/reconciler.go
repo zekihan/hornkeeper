@@ -7,6 +7,7 @@ import (
 	"reflect"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/zekihan/hornkeeper/internal/config"
 	corev1 "k8s.io/api/core/v1"
@@ -137,58 +138,73 @@ func isInvalid(err error) bool {
 }
 
 func (r *Reconciler) desired(ctx context.Context, pvc *corev1.PersistentVolumeClaim, volume *unstructured.Unstructured, field string) (any, error) {
-	if field == "backupTargetName" {
-		name := r.Config.BackupTarget
-		if value, exists := pvc.Labels[BackupTargetLabel]; exists {
-			name = value
-		}
-		if err := config.ValidateBackupTarget(name); err != nil {
-			return nil, invalid(fmt.Errorf("%s=%q: %w", BackupTargetLabel, name, err))
-		}
-		if err := CheckBackupTarget(ctx, r.Reader, r.Config.LonghornNamespace, name); err != nil {
-			if apierrors.IsNotFound(err) || isInvalid(err) {
-				return nil, invalid(err)
-			}
-			return nil, err
-		}
-		return name, nil
+	switch field {
+	case "backupTargetName":
+		return r.desiredBackupTarget(ctx, pvc)
+	case "numberOfReplicas":
+		return r.desiredReplicas(ctx, pvc, volume)
+	default:
+		return nil, fmt.Errorf("unknown field %q", field)
 	}
+}
+
+func (r *Reconciler) desiredBackupTarget(ctx context.Context, pvc *corev1.PersistentVolumeClaim) (string, error) {
+	name := r.Config.BackupTarget
+	if value, exists := pvc.Labels[BackupTargetLabel]; exists {
+		name = value
+	}
+	if err := config.ValidateBackupTarget(name); err != nil {
+		return "", invalid(fmt.Errorf("%s=%q: %w", BackupTargetLabel, name, err))
+	}
+	// Use a short timeout for backup target validation to avoid blocking reconciliation.
+	checkCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	if err := CheckBackupTarget(checkCtx, r.Reader, r.Config.LonghornNamespace, name); err != nil {
+		if apierrors.IsNotFound(err) || isInvalid(err) {
+			return "", invalid(err)
+		}
+		return "", err
+	}
+	return name, nil
+}
+
+func (r *Reconciler) desiredReplicas(ctx context.Context, pvc *corev1.PersistentVolumeClaim, volume *unstructured.Unstructured) (int64, error) {
 	count := r.Config.Replicas
 	if value, exists := pvc.Labels[ReplicasLabel]; exists {
 		// Only decimal digits are accepted; signs and whitespace are not label values.
 		if value == "" || strings.IndexFunc(value, func(c rune) bool { return c < '0' || c > '9' }) >= 0 {
-			return nil, invalid(fmt.Errorf("%s=%q: expected an integer from 1 to 20", ReplicasLabel, value))
+			return 0, invalid(fmt.Errorf("%s=%q: expected an integer from 1 to 20", ReplicasLabel, value))
 		}
 		parsed, err := strconv.Atoi(value)
 		if err != nil {
-			return nil, invalid(fmt.Errorf("%s=%q: %w", ReplicasLabel, value, err))
+			return 0, invalid(fmt.Errorf("%s=%q: %w", ReplicasLabel, value, err))
 		}
 		count = parsed
 	}
 	if err := config.ValidateReplicas(count); err != nil {
-		return nil, invalid(err)
+		return 0, invalid(err)
 	}
 	locality, _, err := unstructured.NestedString(volume.Object, "spec", "dataLocality")
 	if err != nil {
-		return nil, err
+		return 0, err
 	}
 	if locality == "strict-local" && count != 1 {
-		return nil, invalid(fmt.Errorf("replicas=%d conflicts with dataLocality=strict-local, which requires 1", count))
+		return 0, invalid(fmt.Errorf("replicas=%d conflicts with dataLocality=strict-local, which requires 1", count))
 	}
 	layout, _, err := unstructured.NestedString(volume.Object, "spec", "dataLayout", "type")
 	if err != nil {
-		return nil, err
+		return 0, err
 	}
 	if layout == "sharded" && count != 1 {
-		return nil, invalid(fmt.Errorf("replicas=%d conflicts with sharded data layout, which requires 1", count))
+		return 0, invalid(fmt.Errorf("replicas=%d conflicts with sharded data layout, which requires 1", count))
 	}
 	if volume.GetLabels()["longhorn.io/legacy-linked-clone"] == "true" {
 		current, _, err := unstructured.NestedInt64(volume.Object, "spec", "numberOfReplicas")
 		if err != nil {
-			return nil, err
+			return 0, err
 		}
 		if current != int64(count) {
-			return nil, invalid(fmt.Errorf("replica count is immutable on legacy linked-clone volumes"))
+			return 0, invalid(fmt.Errorf("replica count is immutable on legacy linked-clone volumes"))
 		}
 	}
 	return int64(count), nil
