@@ -14,6 +14,7 @@ import (
 	"github.com/zekihan/hornkeeper/internal/config"
 	"github.com/zekihan/hornkeeper/internal/controller"
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/cache"
@@ -101,7 +102,7 @@ func run() error {
 	if err := r.SetupWithManager(ctx, mgr); err != nil {
 		return fmt.Errorf("set up watches: %w", err)
 	}
-	ready := &cacheReady{cache: mgr.GetCache()}
+	ready := &cacheReady{cache: mgr.GetCache(), longhornNS: cfg.LonghornNamespace, reader: mgr.GetAPIReader()}
 	if err := mgr.Add(ready); err != nil {
 		return err
 	}
@@ -117,8 +118,10 @@ func run() error {
 }
 
 type cacheReady struct {
-	cache  cache.Cache
-	synced atomic.Bool
+	cache        cache.Cache
+	longhornNS   string
+	reader       client.Reader
+	synced       atomic.Bool
 }
 
 func (r *cacheReady) NeedLeaderElection() bool { return false }
@@ -130,9 +133,20 @@ func (r *cacheReady) Start(ctx context.Context) error {
 	r.synced.Store(false)
 	return nil
 }
-func (r *cacheReady) Check(*http.Request) error {
+func (r *cacheReady) Check(req *http.Request) error {
 	if !r.synced.Load() {
 		return fmt.Errorf("watch caches have not synchronized")
+	}
+	if req == nil {
+		return nil // Allow nil for testing
+	}
+	// Verify Longhorn API is reachable by listing volumes.
+	checkCtx, cancel := context.WithTimeout(req.Context(), 5*time.Second)
+	defer cancel()
+	volList := &unstructured.UnstructuredList{}
+	volList.SetGroupVersionKind(controller.VolumeGVK)
+	if err := r.reader.List(checkCtx, volList, client.InNamespace(r.longhornNS), client.Limit(1)); err != nil {
+		return fmt.Errorf("Longhorn API not reachable: %w", err)
 	}
 	return nil
 }
