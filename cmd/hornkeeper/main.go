@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"strings"
 	"sync/atomic"
 	"time"
 
@@ -111,6 +112,10 @@ func run() error {
 	}
 	if err := mgr.AddReadyzCheck("cache", ready.Check); err != nil {
 		return err
+	}
+	// Warn if metrics are exposed on non-localhost without authentication.
+	if cfg.MetricsAddress != "0" && cfg.MetricsAddress != ":8080" && !strings.HasPrefix(cfg.MetricsAddress, "127.0.0.1:") && !strings.HasPrefix(cfg.MetricsAddress, "[::1]:") && !strings.HasPrefix(cfg.MetricsAddress, "localhost:") {
+		slog.WarnContext(ctx, "Metrics endpoint exposed on non-localhost address without authentication; consider restricting network access", "address", cfg.MetricsAddress)
 	}
 	slog.InfoContext(ctx, "Starting hornkeeper", "version", version, "longhornNamespace", cfg.LonghornNamespace,
 		"defaultBackupTarget", cfg.BackupTarget, "defaultReplicas", cfg.Replicas, "leaderElection", cfg.LeaderElection)
