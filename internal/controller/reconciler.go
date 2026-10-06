@@ -63,7 +63,7 @@ func (r *Reconciler) resolve(ctx context.Context, key client.ObjectKey) (*corev1
 	}
 	ref := pv.Spec.ClaimRef
 	if !pv.DeletionTimestamp.IsZero() || pv.Status.Phase != corev1.VolumeBound || ref == nil ||
-		ref.Namespace != pvc.Namespace || ref.Name != pvc.Name || ref.UID != pvc.UID || pvc.UID == "" {
+		ref.Namespace != pvc.Namespace || ref.Name != pvc.Name || ref.UID != pvc.UID {
 		ctrl.LoggerFrom(ctx).Info("Waiting for matching bound PV claim reference", "pv", pv.Name)
 		return pvc, nil, nil
 	}

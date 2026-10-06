@@ -128,10 +128,10 @@ func run() error {
 }
 
 type cacheReady struct {
-	cache        cache.Cache
-	longhornNS   string
-	reader       client.Reader
-	synced       atomic.Bool
+	cache      cache.Cache
+	longhornNS string
+	reader     client.Reader
+	synced     atomic.Bool
 }
 
 func (r *cacheReady) NeedLeaderElection() bool { return false }
