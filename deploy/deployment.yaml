@@ -35,8 +35,6 @@ spec:
             - --health-probe-bind-address=:8081
             - --log-level=info
           ports:
-            - name: metrics
-              containerPort: 8080
             - name: health
               containerPort: 8081
           startupProbe:

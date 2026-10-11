@@ -69,8 +69,7 @@ class ChartTests(unittest.TestCase):
         deployment = get(items, "Deployment")
         self.assertEqual(deployment["spec"]["selector"]["matchLabels"],
                          deployment["spec"]["template"]["metadata"]["labels"])
-        self.assertEqual(get(items, "Service")["spec"]["selector"],
-                         deployment["spec"]["selector"]["matchLabels"])
+        self.assertFalse(any(item["kind"] == "Service" for item in items))
         self.assertFalse(any(item["kind"] in ("Namespace", "CustomResourceDefinition", "BackupTarget")
                              or "helm.sh/hook" in item["metadata"].get("annotations", {}) for item in items))
 
@@ -107,6 +106,7 @@ class ChartTests(unittest.TestCase):
         digest = "sha256:" + "a" * 64
         items = resources({"rbac": {"create": False},
                            "serviceAccount": {"create": False, "name": "existing"},
+                           "metrics": {"enabled": True},
                            "image": {"digest": digest}, "imagePullSecrets": [{"name": "registry"}],
                            "nodeSelector": {"kubernetes.io/os": "linux"},
                            "tolerations": [{"key": "dedicated", "operator": "Exists"}],
@@ -114,7 +114,13 @@ class ChartTests(unittest.TestCase):
                            "podAnnotations": {"example.com/owner": "storage"}})
         self.assertEqual({item["kind"] for item in items}, {"Deployment", "Service"})
         deployment = get(items, "Deployment")
+        service = get(items, "Service")["spec"]
+        self.assertEqual(service["selector"], deployment["spec"]["selector"]["matchLabels"])
+        self.assertEqual(service["ports"], [{"name": "metrics", "port": 8080,
+                                           "targetPort": "metrics"}])
         pod = deployment["spec"]["template"]["spec"]
+        self.assertIn("--metrics-bind-address=:8080", pod["containers"][0]["args"])
+        self.assertIn({"name": "metrics", "containerPort": 8080}, pod["containers"][0]["ports"])
         self.assertEqual(pod["serviceAccountName"], "existing")
         self.assertEqual(pod["containers"][0]["image"], "ghcr.io/zekihan/hornkeeper@" + digest)
         self.assertEqual(pod["imagePullSecrets"], [{"name": "registry"}])
