@@ -156,7 +156,7 @@ func (r *cacheReady) Check(req *http.Request) error {
 	volList := &unstructured.UnstructuredList{}
 	volList.SetGroupVersionKind(controller.VolumeGVK)
 	if err := r.reader.List(checkCtx, volList, client.InNamespace(r.longhornNS), client.Limit(1)); err != nil {
-		return fmt.Errorf("Longhorn API not reachable: %w", err)
+		return fmt.Errorf("longhorn API not reachable: %w", err)
 	}
 	return nil
 }

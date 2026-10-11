@@ -15,8 +15,8 @@ import (
 )
 
 const (
-	claimVolumeIndex    = "hornkeeper.pvc.volumeName"
-	volumeHandleIndex   = "hornkeeper.pv.volumeHandle"
+	claimVolumeIndex       = "hornkeeper.pvc.volumeName"
+	volumeHandleIndex      = "hornkeeper.pv.volumeHandle"
 	claimBackupTargetIndex = "hornkeeper.pvc.backupTarget"
 )
 
