@@ -8,13 +8,17 @@ server and etcd using envtest, with the upstream v1.13.0 Volume/BackupTarget sch
 It does not use kubeconfig. No controller hooks or application CRDs are added.
 
 The integration case exercises pending-to-bound PVC transitions, restored CSI
-handles, label overrides/removal, target creation, drift correction, disabling,
+handles, label overrides/removal, target creation and inherited-default recovery,
+drift correction, disabling,
 real resourceVersion conflicts and unrelated fields. Its periodic interval is five
 minutes and event assertions time out after fifteen seconds, so successful checks
 exercise watches rather than periodic polling. A second case validates the example Deployment/Service/RBAC manifests, verifies
 allowed and forbidden service-account operations, and checks that only the leader
 reconciles before a standby takes over and corrects drift. Test control-plane processes stop
-on cleanup. It has no kube-controller-manager; tests explicitly set binding status.
+on cleanup. A third case builds and starts the real binary under the bundled
+service-account permissions, checks readiness without Namespace read access, and
+verifies missing or deleting default targets still fail startup. It has no
+kube-controller-manager; tests explicitly set binding status.
 
 `make container-test` builds a local image and verifies its version, nonroot user,
 read-only execution without capabilities, and rejection of invalid startup defaults

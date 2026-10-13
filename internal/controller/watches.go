@@ -36,12 +36,17 @@ func VolumeHandleIndex(obj client.Object) []string {
 	return []string{pv.Spec.CSI.VolumeHandle}
 }
 
-func ClaimBackupTargetIndex(obj client.Object) []string {
+func (r *Reconciler) ClaimBackupTargetIndex(obj client.Object) []string {
 	pvc := obj.(*corev1.PersistentVolumeClaim)
-	if value, exists := pvc.Labels[BackupTargetLabel]; exists && value != "" {
-		return []string{value}
+	name := r.Config.BackupTarget
+	if value, exists := pvc.Labels[BackupTargetLabel]; exists {
+		// An explicitly empty label is invalid, not an inherited default.
+		name = value
 	}
-	return nil
+	if name == "" {
+		return nil
+	}
+	return []string{name}
 }
 
 func (r *Reconciler) SetupWithManager(ctx context.Context, mgr ctrl.Manager) error {
@@ -51,7 +56,7 @@ func (r *Reconciler) SetupWithManager(ctx context.Context, mgr ctrl.Manager) err
 	if err := mgr.GetFieldIndexer().IndexField(ctx, &corev1.PersistentVolume{}, volumeHandleIndex, VolumeHandleIndex); err != nil {
 		return err
 	}
-	if err := mgr.GetFieldIndexer().IndexField(ctx, &corev1.PersistentVolumeClaim{}, claimBackupTargetIndex, ClaimBackupTargetIndex); err != nil {
+	if err := mgr.GetFieldIndexer().IndexField(ctx, &corev1.PersistentVolumeClaim{}, claimBackupTargetIndex, r.ClaimBackupTargetIndex); err != nil {
 		return err
 	}
 	for _, obj := range []client.Object{Resource(VolumeGVK), Resource(BackupTargetGVK)} {

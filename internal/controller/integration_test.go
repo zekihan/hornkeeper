@@ -194,6 +194,24 @@ func TestDisposableAPIServer(t *testing.T) {
 		t.Fatal(err)
 	}
 	waitFor(t, func() bool { return assertSettings("later", 3) }, "backup target creation event")
+	// Removing and recreating the default target must wake claims that inherit
+	// it. Replicas already match, so no unrelated volume patch can mask a
+	// missing target watch; the five-minute resync is longer than the wait.
+	defaultTarget := Resource(BackupTargetGVK)
+	defaultTarget.SetNamespace("storage")
+	defaultTarget.SetName("rustfs")
+	if err := c.Delete(ctx, defaultTarget); err != nil {
+		t.Fatal(err)
+	}
+	invalidBefore := testutil.ToFloat64(m.Fields.WithLabelValues("backupTargetName", "invalid"))
+	updateLabels(map[string]string{EnabledLabel: "true", ReplicasLabel: "3"})
+	waitFor(t, func() bool {
+		return assertSettings("later", 3) && testutil.ToFloat64(m.Fields.WithLabelValues("backupTargetName", "invalid")) > invalidBefore
+	}, "missing inherited default target")
+	if err := c.Create(ctx, defaultTarget); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, func() bool { return assertSettings("rustfs", 3) }, "inherited default target recreation event")
 	updateLabels(map[string]string{EnabledLabel: "false", BackupTargetLabel: "default", ReplicasLabel: "1"})
 	if err := c.Get(ctx, client.ObjectKeyFromObject(volume), volume); err != nil {
 		t.Fatal(err)
@@ -206,7 +224,7 @@ func TestDisposableAPIServer(t *testing.T) {
 	if _, err := r.Reconcile(ctx, ctrl.Request{NamespacedName: client.ObjectKeyFromObject(pvc)}); err != nil {
 		t.Fatal(err)
 	}
-	if !assertSettings("later", 4) {
+	if !assertSettings("rustfs", 4) {
 		t.Fatal("disabled claim enforced settings")
 	}
 	if err := c.Get(ctx, client.ObjectKeyFromObject(volume), volume); err != nil {
