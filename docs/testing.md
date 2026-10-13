@@ -20,6 +20,12 @@ service-account permissions, checks readiness without Namespace read access, and
 verifies missing or deleting default targets still fail startup. It has no
 kube-controller-manager; tests explicitly set binding status.
 
+`make chart-test` checks Helm rendering and decodes the generated resources using
+Kubernetes API types, including numeric and boolean-looking string names. It
+requires Helm, Go and the Python dependencies in `tests/helm/requirements.txt`.
+The typed chart tests also run with `go test ./...` when Helm is on PATH or set
+through `HELM`; without Helm, that optional Go test is skipped.
+
 `make container-test` builds a local image and verifies its version, nonroot user,
 read-only execution without capabilities, and rejection of invalid startup defaults
 with networking disabled. It does not publish the image.

@@ -10,12 +10,12 @@ build:
 	mkdir -p dist
 	$(GO) build -trimpath -ldflags '$(LDFLAGS)' -o $(BINARY) ./cmd/hornkeeper
 fmt:
-	gofmt -w cmd internal
+	gofmt -w cmd internal tests/helm
 
 tidy:
 	$(GO) mod tidy
 lint:
-	@test -z "$$(gofmt -l cmd internal)" || (gofmt -l cmd internal; exit 1)
+	@test -z "$$(gofmt -l cmd internal tests/helm)" || (gofmt -l cmd internal tests/helm; exit 1)
 	golangci-lint run --build-tags=integration
 
 test:
@@ -40,6 +40,7 @@ release-check:
 chart-test:
 	$(HELM) lint --strict charts/hornkeeper
 	HELM=$(HELM) $(PYTHON) tests/helm/test_chart.py
+	HELM=$(HELM) $(GO) test -count=1 ./tests/helm
 
 chart-package: chart-test
 	mkdir -p dist/charts
