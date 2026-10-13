@@ -5,7 +5,7 @@
 `make lint test build` checks formatting, golangci-lint, race-enabled unit tests and
 the application build. `make test/integration` starts a disposable Kubernetes API
 server and etcd using envtest, with the upstream v1.13.0 Volume/BackupTarget schemas.
-It does not use kubeconfig. No controller hooks or application CRDs are added.
+It does not use your kubeconfig. No controller hooks or application CRDs are added.
 
 The integration case exercises pending-to-bound PVC transitions, restored CSI
 handles, label overrides/removal, target creation and inherited-default recovery,
