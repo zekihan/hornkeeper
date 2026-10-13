@@ -5,8 +5,10 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"strings"
 	"testing"
 
+	"github.com/zekihan/hornkeeper/internal/config"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	rbacv1 "k8s.io/api/rbac/v1"
@@ -16,9 +18,8 @@ import (
 	"k8s.io/apimachinery/pkg/util/yaml"
 )
 
-// Helm's renderer accepts YAML scalars that Kubernetes cannot decode into string
-// fields. Decode every resource through the actual Kubernetes API types as well.
-func TestRenderedChartDecodesKubernetesStrings(t *testing.T) {
+func helmBinary(t *testing.T) string {
+	t.Helper()
 	helm := os.Getenv("HELM")
 	if helm == "" {
 		var err error
@@ -27,6 +28,13 @@ func TestRenderedChartDecodesKubernetesStrings(t *testing.T) {
 			t.Skip("Helm is unavailable; make chart-test runs this regression with HELM set")
 		}
 	}
+	return helm
+}
+
+// Helm's renderer accepts YAML scalars that Kubernetes cannot decode into string
+// fields. Decode every resource through the actual Kubernetes API types as well.
+func TestRenderedChartDecodesKubernetesStrings(t *testing.T) {
+	helm := helmBinary(t)
 	scheme := runtime.NewScheme()
 	for _, add := range []func(*runtime.Scheme) error{corev1.AddToScheme, appsv1.AddToScheme, rbacv1.AddToScheme} {
 		if err := add(scheme); err != nil {
@@ -80,6 +88,36 @@ func TestRenderedChartDecodesKubernetesStrings(t *testing.T) {
 			}
 			if count != 9 {
 				t.Fatalf("decoded %d resources, want 9", count)
+			}
+		})
+	}
+}
+
+func TestBackupTargetLengthMatchesRuntime(t *testing.T) {
+	helm := helmBinary(t)
+	for _, tc := range []struct {
+		name, target string
+		valid        bool
+	}{
+		{"empty", "", false},
+		{"one character", "a", true},
+		{"63 characters", strings.Repeat("a", 63), true},
+		{"63 characters with dot", strings.Repeat("a", 31) + "." + strings.Repeat("b", 31), true},
+		{"64 characters", strings.Repeat("a", 64), false},
+		{"253 characters", strings.Repeat("a", 253), false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := config.Default()
+			cfg.BackupTarget = tc.target
+			if err := cfg.Validate(); (err == nil) != tc.valid {
+				t.Fatalf("runtime validation = %v, valid = %v", err, tc.valid)
+			}
+			output, err := exec.CommandContext(t.Context(), helm, "template", "hornkeeper", "../../charts/hornkeeper", "--set-string", "controller.defaultBackupTarget="+tc.target).CombinedOutput()
+			if (err == nil) != tc.valid {
+				t.Fatalf("chart validation = %v, valid = %v\n%s", err, tc.valid, output)
+			}
+			if !tc.valid && (!bytes.Contains(output, []byte("schema")) || !bytes.Contains(output, []byte("defaultBackupTarget"))) {
+				t.Fatalf("expected target schema validation error, got %s", output)
 			}
 		})
 	}

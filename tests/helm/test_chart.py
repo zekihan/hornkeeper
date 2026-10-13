@@ -205,6 +205,24 @@ class ChartTests(unittest.TestCase):
                                               longhorn_namespace=longhorn_namespace, name="on",
                                               fullname="123", service_account="yes")
 
+    def test_backup_target_length_boundary(self):
+        for target in ("a", "a" * 63, "a" * 31 + "." + "b" * 31):
+            with self.subTest(target=target):
+                items = resources({"controller": {"defaultBackupTarget": target}})
+                args = get(items, "Deployment")["spec"]["template"]["spec"]["containers"][0]["args"]
+                self.assertIn(f"--default-backup-target={target}", args)
+        for target in ("", "a" * 64, "a" * 253):
+            with self.subTest(target=target):
+                result = render({"controller": {"defaultBackupTarget": target}})
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn("schema", result.stderr.lower())
+                self.assertIn("defaultBackupTarget", result.stderr)
+        # The target's label-value limit must not restrict other resource names.
+        secret = "a" * 64
+        items = resources({"imagePullSecrets": [{"name": secret}]})
+        pod = get(items, "Deployment")["spec"]["template"]["spec"]
+        self.assertEqual(pod["imagePullSecrets"], [{"name": secret}])
+
     def test_invalid_values_fail_before_installation(self):
         for values in (
             {"replicaCount": 0}, {"controller": {"leaderElection": False}},
