@@ -1,8 +1,8 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: {{ include "hornkeeper.fullname" . }}
-  namespace: {{ .Release.Namespace }}
+  name: {{ include "hornkeeper.fullname" . | quote }}
+  namespace: {{ .Release.Namespace | quote }}
   labels:
     {{- include "hornkeeper.labels" . | nindent 4 }}
 spec:
@@ -19,7 +19,7 @@ spec:
         {{- toYaml . | nindent 8 }}
       {{- end }}
     spec:
-      serviceAccountName: {{ include "hornkeeper.serviceAccountName" . }}
+      serviceAccountName: {{ include "hornkeeper.serviceAccountName" . | quote }}
       terminationGracePeriodSeconds: 30
       {{- with .Values.imagePullSecrets }}
       imagePullSecrets:
@@ -30,7 +30,7 @@ spec:
       containers:
         - name: hornkeeper
           image: {{ include "hornkeeper.image" . | quote }}
-          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          imagePullPolicy: {{ .Values.image.pullPolicy | quote }}
           args:
             - {{ printf "--longhorn-namespace=%s" .Values.controller.longhornNamespace | quote }}
             - {{ printf "--default-backup-target=%s" .Values.controller.defaultBackupTarget | quote }}
@@ -38,7 +38,7 @@ spec:
             - {{ printf "--leader-elect=%v" .Values.controller.leaderElection | quote }}
             - {{ printf "--leader-election-namespace=%s" .Release.Namespace | quote }}
             - {{ printf "--resync-interval=%s" .Values.controller.resyncInterval | quote }}
-            - --metrics-bind-address={{ ternary ":8080" "0" .Values.metrics.enabled }}
+            - {{ printf "--metrics-bind-address=%s" (ternary ":8080" "0" .Values.metrics.enabled) | quote }}
             - --health-probe-bind-address=:8081
             - {{ printf "--log-level=%s" .Values.controller.logLevel | quote }}
           ports:

@@ -130,6 +130,99 @@ class ChartTests(unittest.TestCase):
         self.assertEqual(deployment["spec"]["template"]["metadata"]["annotations"],
                          {"example.com/owner": "storage"})
 
+    def assert_string_fields(self, items, *, release, namespace, longhorn_namespace,
+                             name, fullname, service_account):
+        chart = yaml.safe_load((CHART / "Chart.yaml").read_text())
+        selectors = {"app.kubernetes.io/name": name,
+                     "app.kubernetes.io/instance": release}
+        labels = {**selectors,
+                  "helm.sh/chart": f"{chart['name']}-{chart['version']}".replace("+", "_"),
+                  "app.kubernetes.io/version": chart["appVersion"],
+                  "app.kubernetes.io/managed-by": "Helm"}
+        rbac_name = f"{namespace}-{fullname}"
+        expected_metadata = [
+            ("Deployment", fullname, namespace),
+            ("Service", fullname, namespace),
+            ("ServiceAccount", service_account, namespace),
+            ("ClusterRole", rbac_name, None),
+            ("ClusterRoleBinding", rbac_name, None),
+            ("Role", f"{rbac_name}-longhorn", longhorn_namespace),
+            ("RoleBinding", f"{rbac_name}-longhorn", longhorn_namespace),
+            ("Role", f"{fullname}-leader", namespace),
+            ("RoleBinding", f"{fullname}-leader", namespace),
+        ]
+        self.assertCountEqual(
+            [(item["kind"], item["metadata"]["name"], item["metadata"].get("namespace"))
+             for item in items], expected_metadata)
+        for item in items:
+            self.assertEqual(item["metadata"]["labels"], labels)
+            self.assertIsInstance(item["metadata"]["name"], str)
+            if "namespace" in item["metadata"]:
+                self.assertIsInstance(item["metadata"]["namespace"], str)
+            for value in item["metadata"]["labels"].values():
+                self.assertIsInstance(value, str)
+            if item["kind"].endswith("RoleBinding"):
+                self.assertEqual(item["subjects"], [{"kind": "ServiceAccount",
+                                 "name": service_account, "namespace": namespace}])
+                self.assertEqual(item["roleRef"], {
+                    "apiGroup": "rbac.authorization.k8s.io",
+                    "kind": item["kind"].removesuffix("Binding"),
+                    "name": item["metadata"]["name"],
+                })
+        deployment = get(items, "Deployment")
+        self.assertEqual(deployment["spec"]["selector"]["matchLabels"], selectors)
+        self.assertEqual(deployment["spec"]["template"]["metadata"]["labels"], selectors)
+        self.assertEqual(get(items, "Service")["spec"]["selector"], selectors)
+        pod = deployment["spec"]["template"]["spec"]
+        self.assertEqual(pod["serviceAccountName"], service_account)
+        self.assertIn(f"--longhorn-namespace={longhorn_namespace}", pod["containers"][0]["args"])
+        self.assertIn(f"--leader-election-namespace={namespace}", pod["containers"][0]["args"])
+        self.assertIn("--metrics-bind-address=:8080", pod["containers"][0]["args"])
+        self.assertIsInstance(deployment["spec"]["replicas"], int)
+        self.assertIsInstance(get(items, "Service")["spec"]["ports"][0]["port"], int)
+
+    def test_yaml_looking_names_remain_exact_strings(self):
+        # These are schema-valid strings, not boolean/integer values in values.yaml.
+        for account in ("", "yes"):
+            with self.subTest(service_account=account):
+                items = resources({"nameOverride": "on", "fullnameOverride": "123",
+                                   "serviceAccount": {"name": account},
+                                   "metrics": {"enabled": True}}, release="2026")
+                self.assert_string_fields(items, release="2026", namespace="hornkeeper",
+                                          longhorn_namespace="longhorn", name="on",
+                                          fullname="123", service_account=account or "123")
+
+    def test_yaml_looking_namespace_matrix_remains_exact_strings(self):
+        for namespace in ("2026", "on", "yes", "true", "null"):
+            for longhorn_namespace in ("123", "off", "no", "false", "null"):
+                with self.subTest(namespace=namespace, longhorn_namespace=longhorn_namespace):
+                    items = resources({"nameOverride": "on", "fullnameOverride": "123",
+                                       "serviceAccount": {"name": "yes"},
+                                       "controller": {"longhornNamespace": longhorn_namespace},
+                                       "metrics": {"enabled": True}},
+                                      namespace=namespace, release="2026")
+                    self.assert_string_fields(items, release="2026", namespace=namespace,
+                                              longhorn_namespace=longhorn_namespace, name="on",
+                                              fullname="123", service_account="yes")
+
+    def test_backup_target_length_boundary(self):
+        for target in ("a", "a" * 63, "a" * 31 + "." + "b" * 31):
+            with self.subTest(target=target):
+                items = resources({"controller": {"defaultBackupTarget": target}})
+                args = get(items, "Deployment")["spec"]["template"]["spec"]["containers"][0]["args"]
+                self.assertIn(f"--default-backup-target={target}", args)
+        for target in ("", "a" * 64, "a" * 253):
+            with self.subTest(target=target):
+                result = render({"controller": {"defaultBackupTarget": target}})
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn("schema", result.stderr.lower())
+                self.assertIn("defaultBackupTarget", result.stderr)
+        # The target's label-value limit must not restrict other resource names.
+        secret = "a" * 64
+        items = resources({"imagePullSecrets": [{"name": secret}]})
+        pod = get(items, "Deployment")["spec"]["template"]["spec"]
+        self.assertEqual(pod["imagePullSecrets"], [{"name": secret}])
+
     def test_invalid_values_fail_before_installation(self):
         for values in (
             {"replicaCount": 0}, {"controller": {"leaderElection": False}},

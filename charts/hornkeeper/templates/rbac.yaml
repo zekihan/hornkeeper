@@ -2,7 +2,7 @@
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
-  name: {{ include "hornkeeper.rbacName" . }}
+  name: {{ include "hornkeeper.rbacName" . | quote }}
   labels:
     {{- include "hornkeeper.labels" . | nindent 4 }}
 rules:
@@ -13,23 +13,23 @@ rules:
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
 metadata:
-  name: {{ include "hornkeeper.rbacName" . }}
+  name: {{ include "hornkeeper.rbacName" . | quote }}
   labels:
     {{- include "hornkeeper.labels" . | nindent 4 }}
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: ClusterRole
-  name: {{ include "hornkeeper.rbacName" . }}
+  name: {{ include "hornkeeper.rbacName" . | quote }}
 subjects:
   - kind: ServiceAccount
-    name: {{ include "hornkeeper.serviceAccountName" . }}
-    namespace: {{ .Release.Namespace }}
+    name: {{ include "hornkeeper.serviceAccountName" . | quote }}
+    namespace: {{ .Release.Namespace | quote }}
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
-  name: {{ include "hornkeeper.rbacName" . }}-longhorn
-  namespace: {{ .Values.controller.longhornNamespace }}
+  name: {{ printf "%s-longhorn" (include "hornkeeper.rbacName" .) | quote }}
+  namespace: {{ .Values.controller.longhornNamespace | quote }}
   labels:
     {{- include "hornkeeper.labels" . | nindent 4 }}
 rules:
@@ -43,25 +43,25 @@ rules:
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
 metadata:
-  name: {{ include "hornkeeper.rbacName" . }}-longhorn
-  namespace: {{ .Values.controller.longhornNamespace }}
+  name: {{ printf "%s-longhorn" (include "hornkeeper.rbacName" .) | quote }}
+  namespace: {{ .Values.controller.longhornNamespace | quote }}
   labels:
     {{- include "hornkeeper.labels" . | nindent 4 }}
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: Role
-  name: {{ include "hornkeeper.rbacName" . }}-longhorn
+  name: {{ printf "%s-longhorn" (include "hornkeeper.rbacName" .) | quote }}
 subjects:
   - kind: ServiceAccount
-    name: {{ include "hornkeeper.serviceAccountName" . }}
-    namespace: {{ .Release.Namespace }}
+    name: {{ include "hornkeeper.serviceAccountName" . | quote }}
+    namespace: {{ .Release.Namespace | quote }}
 {{- if .Values.controller.leaderElection }}
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
-  name: {{ include "hornkeeper.fullname" . }}-leader
-  namespace: {{ .Release.Namespace }}
+  name: {{ printf "%s-leader" (include "hornkeeper.fullname" .) | quote }}
+  namespace: {{ .Release.Namespace | quote }}
   labels:
     {{- include "hornkeeper.labels" . | nindent 4 }}
 rules:
@@ -79,17 +79,17 @@ rules:
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
 metadata:
-  name: {{ include "hornkeeper.fullname" . }}-leader
-  namespace: {{ .Release.Namespace }}
+  name: {{ printf "%s-leader" (include "hornkeeper.fullname" .) | quote }}
+  namespace: {{ .Release.Namespace | quote }}
   labels:
     {{- include "hornkeeper.labels" . | nindent 4 }}
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: Role
-  name: {{ include "hornkeeper.fullname" . }}-leader
+  name: {{ printf "%s-leader" (include "hornkeeper.fullname" .) | quote }}
 subjects:
   - kind: ServiceAccount
-    name: {{ include "hornkeeper.serviceAccountName" . }}
-    namespace: {{ .Release.Namespace }}
+    name: {{ include "hornkeeper.serviceAccountName" . | quote }}
+    namespace: {{ .Release.Namespace | quote }}
 {{- end }}
 {{- end }}

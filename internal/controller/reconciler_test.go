@@ -37,7 +37,10 @@ func newFixture(t *testing.T) *fixture {
 	if err := corev1.AddToScheme(scheme); err != nil {
 		t.Fatal(err)
 	}
-	f := &fixture{}
+	cfg := config.Default()
+	cfg.BackupTarget = "rustfs"
+	cfg.Replicas = 2
+	f := &fixture{r: &Reconciler{Config: cfg, Metrics: NewMetrics(prometheus.NewRegistry())}}
 	f.pvc = &corev1.PersistentVolumeClaim{
 		ObjectMeta: metav1.ObjectMeta{Name: "claim", Namespace: "app", UID: "claim-uid", Labels: map[string]string{EnabledLabel: "true"}},
 		Spec:       corev1.PersistentVolumeClaimSpec{VolumeName: "pv"},
@@ -71,7 +74,7 @@ func newFixture(t *testing.T) *fixture {
 		WithStatusSubresource(f.pvc, f.pv).
 		WithIndex(&corev1.PersistentVolumeClaim{}, claimVolumeIndex, ClaimVolumeIndex).
 		WithIndex(&corev1.PersistentVolume{}, volumeHandleIndex, VolumeHandleIndex).
-		WithIndex(&corev1.PersistentVolumeClaim{}, claimBackupTargetIndex, ClaimBackupTargetIndex).
+		WithIndex(&corev1.PersistentVolumeClaim{}, claimBackupTargetIndex, f.r.ClaimBackupTargetIndex).
 		WithInterceptorFuncs(interceptor.Funcs{Patch: func(ctx context.Context, c client.WithWatch, obj client.Object, patch client.Patch, opts ...client.PatchOption) error {
 			f.patches++
 			data, err := patch.Data(obj)
@@ -100,10 +103,8 @@ func newFixture(t *testing.T) *fixture {
 			}
 			return c.Patch(ctx, obj, patch, opts...)
 		}}).Build()
-	cfg := config.Default()
-	cfg.BackupTarget = "rustfs"
-	cfg.Replicas = 2
-	f.r = &Reconciler{Client: f.c, Reader: f.c, Config: cfg, Metrics: NewMetrics(prometheus.NewRegistry())}
+	f.r.Client = f.c
+	f.r.Reader = f.c
 	return f
 }
 
