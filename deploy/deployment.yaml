@@ -23,7 +23,7 @@ spec:
           type: RuntimeDefault
       containers:
         - name: hornkeeper
-          image: ghcr.io/zekihan/hornkeeper:0.1.0
+          image: ghcr.io/zekihan/hornkeeper:0.1.4
           args:
             - --longhorn-namespace=longhorn
             - --default-backup-target=default

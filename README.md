@@ -89,7 +89,7 @@ Longhorn and the selected backup target must already exist.
 
 ```sh
 helm upgrade --install hornkeeper oci://ghcr.io/zekihan/charts/hornkeeper \
-  --version 0.1.0 --namespace hornkeeper --create-namespace \
+  --version 0.1.4 --namespace hornkeeper --create-namespace \
   --set controller.defaultBackupTarget=rustfs \
   --set controller.defaultReplicas=2
 ```
