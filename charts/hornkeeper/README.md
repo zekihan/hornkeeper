@@ -45,7 +45,9 @@ namespace and `controller.longhornNamespace` must exist before installation;
 
 With `rbac.create=false`, provision the same permissions externally before
 starting the controller. Disabling leader election requires `replicaCount=1`.
-The health listener and probes remain enabled when metrics are disabled.
+With leader election enabled, the Deployment uses Kubernetes `RollingUpdate`;
+with leader election disabled, it uses `Recreate` to prevent overlapping controllers
+during an update. The health listener and probes remain enabled when metrics are disabled.
 
 Changing defaults affects all enabled claims without the corresponding override.
 Updating the desired replica count does not mean Longhorn has finished rebuilding.

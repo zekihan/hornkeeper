@@ -91,6 +91,14 @@ class ChartTests(unittest.TestCase):
                             get(other_namespace, "ClusterRole")["metadata"]["name"])
         self.assertIn("--leader-elect=true", args)
 
+    def test_disabled_leader_election_uses_recreate_strategy(self):
+        deployment = get(resources({"replicaCount": 1, "controller": {"leaderElection": False}}), "Deployment")
+        self.assertEqual(deployment["spec"]["strategy"], {"type": "Recreate"})
+
+    def test_leader_election_keeps_rolling_update_strategy(self):
+        deployment = get(resources(), "Deployment")
+        self.assertEqual(deployment["spec"]["strategy"]["type"], "RollingUpdate")
+
     def test_single_replica_without_election_or_metrics(self):
         items = resources({"replicaCount": 1, "controller": {"leaderElection": False},
                            "metrics": {"enabled": False}})

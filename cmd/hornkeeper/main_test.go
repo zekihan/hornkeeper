@@ -2,11 +2,14 @@ package main
 
 import (
 	"context"
+	"net/http"
+	"net/http/httptest"
 	"sync"
 	"testing"
 	"time"
 
 	"sigs.k8s.io/controller-runtime/pkg/cache"
+	"sigs.k8s.io/controller-runtime/pkg/healthz"
 )
 
 type readinessCache struct {
@@ -18,6 +21,28 @@ type readinessCache struct {
 func (c readinessCache) WaitForCacheSync(context.Context) bool {
 	close(c.synchronized)
 	return c.syncResult
+}
+
+// Readiness must work without an API reader, including for real HTTP requests.
+// An unavailable API must not turn probes into API calls or block them.
+func TestReadinessHTTPIsLocal(t *testing.T) {
+	r := &cacheReady{}
+	handler := http.StripPrefix("/readyz", &healthz.Handler{Checks: map[string]healthz.Checker{"cache": r.Check}})
+	for _, synced := range []bool{false, true, false} {
+		r.synced.Store(synced)
+		for range 10 {
+			req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/readyz", nil)
+			response := httptest.NewRecorder()
+			handler.ServeHTTP(response, req)
+			want := http.StatusInternalServerError
+			if synced {
+				want = http.StatusOK
+			}
+			if response.Code != want {
+				t.Fatalf("synced=%v: got status %d, want %d", synced, response.Code, want)
+			}
+		}
+	}
 }
 
 func TestReadinessAndShutdown(t *testing.T) {

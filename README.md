@@ -177,7 +177,11 @@ or emit PVC events.
 
 `/healthz` checks the running process. `/readyz` becomes successful after all
 required watch caches synchronize, including on a standby instance. Readiness
-does not assert that every volume is healthy or every policy is valid.
+checks only local lifecycle state and becomes unsuccessful on shutdown; it never
+calls the Kubernetes API. API latency or an outage after initial synchronization
+does not directly change readiness. Use reconciliation errors and logs to monitor
+API failures. Readiness does not assert that every volume is healthy or every
+policy is valid.
 
 `/metrics` exposes Go/process and controller-runtime work queue/reconciliation
 metrics, plus:
