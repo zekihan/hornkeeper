@@ -55,3 +55,27 @@ credentials, artifact-ID selection, checksum tampering, and the actual publisher
 shell commands with mocked registry/Helm/GitHub clients. No real publication occurs.
 The shell mock requires Bash 4+ (as supplied by Ubuntu runners); on macOS the test
 uses Homebrew Bash when available.
+
+## Reproducible integration bootstrap
+
+`make test/integration` runs the complete disposable Kubernetes gate without
+requiring preinstalled assets. `scripts/integration.sh` pins setup-envtest's
+nested module to the official controller-runtime v0.25.2 commit
+[`5d8467b3065818a3b382d8f6941147a801fd1969`](https://github.com/kubernetes-sigs/controller-runtime/tree/5d8467b3065818a3b382d8f6941147a801fd1969/tools/setup-envtest).
+The parent module's version previously failed package resolution; the explicit
+source commit resolves the executable's nested module. Kubernetes 1.37.0 is
+selected exactly, with checksum verification enabled against the official
+[release index pinned at 1031496fc98a4f51010c3bdfdeb57b5d67bea7bd](https://github.com/kubernetes-sigs/controller-tools/blob/1031496fc98a4f51010c3bdfdeb57b5d67bea7bd/envtest-releases.yaml).
+Review both sources and checksums when updating the bootstrap.
+
+Assets default to `tmp/envtest` in this checkout. An explicit
+`KUBEBUILDER_ASSETS` still permits locally managed binaries. To verify a fresh
+download independently of an existing installation:
+
+```sh
+env -u KUBEBUILDER_ASSETS ENVTEST_BIN_DIR="$(mktemp -d)" make test/integration
+```
+
+The fresh-download path passed all three integration tests. Regression fixtures
+also ensure bootstrap failure prevents test execution, test failures propagate,
+and the supplied-assets path retains the entire race-enabled integration gate.

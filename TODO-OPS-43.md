@@ -7,15 +7,15 @@
 - [ ] After review and explicit publication approval, perform an intended release
   and verify GitHub assets, both image architectures in both registries, tags and
   the OCI Helm chart. Local publishers are mocked; no real publish was executed.
-- [ ] Repair the existing integration-test asset bootstrap separately. Without
-  `KUBEBUILDER_ASSETS`, `make test/integration` fails because the existing
-  `sigs.k8s.io/controller-runtime/tools/setup-envtest@v0.25.2` module does not contain
-  that package. This same command exists on main; it is outside OPS-43 scope.
-  All three integration tests passed with the already-installed Kubernetes 1.37.0
-  envtest binaries supplied through `KUBEBUILDER_ASSETS` (disposable local API server).
 
-Local evidence: workflow policy and 13 regression tests, actionlint, Go race/integration tests,
+
+Local evidence: workflow policy and 17 regression tests, actionlint, Go race/integration tests,
 GoReleaser configuration, Go lint/module verification, build, Helm strict lint, 11 Python chart tests, Go Helm
 tests/chart packaging, disposable container smoke, a real multi-platform OCI export
 (amd64/arm64), and a nonpublishing GoReleaser snapshot with checksum verification passed. No Actions retries,
 billing/runner changes, production releases, or deployment were attempted.
+
+Integration bootstrap is repaired: the exact official setup-envtest commit,
+Kubernetes 1.37.0, and checksum-bearing release index are pinned. All three
+integration tests passed with `KUBEBUILDER_ASSETS` unset and a newly created empty
+`ENVTEST_BIN_DIR`, downloading and verifying fresh binaries before testing.
