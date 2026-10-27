@@ -3,5 +3,14 @@
   "extends": [
     "config:recommended",
     "github>zekihan/renovate-config"
+  ],
+  "packageRules": [
+    {
+      "matchManagers": [
+        "github-actions"
+      ],
+      "pinDigests": true,
+      "automerge": false
+    }
   ]
 }
