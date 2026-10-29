@@ -49,6 +49,9 @@ func run() error {
 	flag.StringVar(&logLevel, "log-level", "info", "Log level: debug, info, warn, error")
 	flag.BoolVar(&showVersion, "version", false, "Print version and exit")
 	flag.Parse()
+	if flag.NArg() != 0 {
+		return fmt.Errorf("unexpected positional arguments: %q; configuration must use flags", flag.Args())
+	}
 	if showVersion {
 		fmt.Println(version)
 		return nil
