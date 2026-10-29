@@ -28,7 +28,11 @@ type Reconciler struct {
 func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	pvc := &corev1.PersistentVolumeClaim{}
 	if err := r.Reader.Get(ctx, req.NamespacedName, pvc); err != nil {
-		return ctrl.Result{}, client.IgnoreNotFound(err)
+		if err := client.IgnoreNotFound(err); err != nil {
+			r.Metrics.Reconciles.WithLabelValues("error").Inc()
+			return ctrl.Result{}, err
+		}
+		return ctrl.Result{}, nil
 	}
 	if !enabled(pvc) {
 		r.Metrics.Reconciles.WithLabelValues("ignored").Inc()

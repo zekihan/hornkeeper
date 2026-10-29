@@ -3,11 +3,13 @@ package controller
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"reflect"
 	"testing"
 
 	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/testutil"
 	"github.com/zekihan/hornkeeper/internal/config"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -575,4 +577,47 @@ func TestConflictRechecksChangedOverrides(t *testing.T) {
 	}})
 	f.reconcile(t)
 	f.settings(t, "default", 4)
+}
+
+// Errors reading the initial PVC must be visible in the same error counter as
+// failures resolving and patching the volume. A deleted PVC is a normal no-op.
+func TestInitialClaimReadErrorMetrics(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		readErr   error
+		wantError bool
+	}{
+		{"forbidden", apierrors.NewForbidden(schema.GroupResource{Resource: "persistentvolumeclaims"}, "claim", errors.New("denied")), true},
+		{"deadline", context.DeadlineExceeded, true},
+		{"not found", apierrors.NewNotFound(schema.GroupResource{Resource: "persistentvolumeclaims"}, "claim"), false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newFixture(t)
+			f.r.Reader = interceptor.NewClient(f.c, interceptor.Funcs{Get: func(_ context.Context, _ client.WithWatch, _ client.ObjectKey, obj client.Object, _ ...client.GetOption) error {
+				if _, ok := obj.(*corev1.PersistentVolumeClaim); !ok {
+					t.Fatal("read beyond the failed initial claim lookup")
+				}
+				return tc.readErr
+			}})
+			result, err := f.r.Reconcile(t.Context(), ctrl.Request{NamespacedName: client.ObjectKeyFromObject(f.pvc)})
+			wantCount := float64(0)
+			if tc.wantError {
+				wantCount = 1
+				if !errors.Is(err, tc.readErr) {
+					t.Fatalf("read error not preserved: got %v, want %v", err, tc.readErr)
+				}
+			} else if err != nil {
+				t.Fatalf("deleted claim returned an error: %v", err)
+			}
+			if got := testutil.ToFloat64(f.r.Metrics.Reconciles.WithLabelValues("error")); got != wantCount {
+				t.Errorf("error reconciliations = %v, want %v", got, wantCount)
+			}
+			if result != (ctrl.Result{}) || f.patches != 0 {
+				t.Fatalf("failed lookup scheduled work: result=%v patches=%d", result, f.patches)
+			}
+			if got := testutil.CollectAndCount(f.r.Metrics.Fields); got != 0 {
+				t.Fatalf("recorded field outcomes before resolving the claim: %d", got)
+			}
+		})
+	}
 }
