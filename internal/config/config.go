@@ -57,6 +57,10 @@ func ValidateBackupTarget(name string) error {
 	if name == "" {
 		return fmt.Errorf("backup target must not be empty")
 	}
+	// Targets must be both Kubernetes resource names and PVC label values.
+	if errs := validation.IsDNS1123Subdomain(name); len(errs) != 0 {
+		return fmt.Errorf("backup target must be a valid Kubernetes resource name: %s", strings.Join(errs, "; "))
+	}
 	if errs := validation.IsValidLabelValue(name); len(errs) != 0 {
 		return fmt.Errorf("backup target must be a valid Kubernetes label value: %s", strings.Join(errs, "; "))
 	}
