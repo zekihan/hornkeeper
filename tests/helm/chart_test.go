@@ -93,12 +93,17 @@ func TestRenderedChartDecodesKubernetesStrings(t *testing.T) {
 	}
 }
 
-func TestBackupTargetLengthMatchesRuntime(t *testing.T) {
+func TestBackupTargetMatchesRuntime(t *testing.T) {
 	helm := helmBinary(t)
 	for _, tc := range []struct {
 		name, target string
 		valid        bool
 	}{
+		{"uppercase", "Backup", false},
+		{"underscore", "backup_target", false},
+		{"empty DNS component", "backup..target", false},
+		{"leading component hyphen", "backup.-target", false},
+		{"trailing component hyphen", "backup-.target", false},
 		{"empty", "", false},
 		{"one character", "a", true},
 		{"63 characters", strings.Repeat("a", 63), true},

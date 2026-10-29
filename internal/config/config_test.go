@@ -1,6 +1,9 @@
 package config
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestValidate(t *testing.T) {
 	if err := Default().Validate(); err != nil {
@@ -39,5 +42,34 @@ func TestValidate(t *testing.T) {
 		if err := c.Validate(); err != nil {
 			t.Fatal(err)
 		}
+	}
+}
+
+func TestBackupTargetMustNameKubernetesResource(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		valid bool
+	}{
+		{"default", true},
+		{"backup-01", true},
+		{"backup.example", true},
+		{strings.Repeat("a", 63), true},
+		{"Backup", false},
+		{"backup_target", false},
+		{"backup..target", false},
+		{"backup.-target", false},
+		{"backup-.target", false},
+		{strings.Repeat("a", 64), false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := Default()
+			cfg.BackupTarget = tc.name
+			if err := cfg.Validate(); (err == nil) != tc.valid {
+				t.Fatalf("Validate() = %v, valid = %v", err, tc.valid)
+			}
+			if err := ValidateBackupTarget(tc.name); (err == nil) != tc.valid {
+				t.Fatalf("ValidateBackupTarget() = %v, valid = %v", err, tc.valid)
+			}
+		})
 	}
 }
