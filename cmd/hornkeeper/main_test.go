@@ -2,8 +2,12 @@ package main
 
 import (
 	"context"
+	"flag"
+	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -86,5 +90,30 @@ func TestReadinessAndShutdown(t *testing.T) {
 		if err := r.Check(nil); err == nil {
 			t.Fatal("ready after shutdown")
 		}
+	}
+}
+
+// Keep every invocation safe even before argument validation is implemented:
+// --version exits locally, and zero replicas fails before Kubernetes config loads.
+func TestRunRejectsPositionalArguments(t *testing.T) {
+	for _, args := range [][]string{
+		{"--version", "config.yaml"},
+		{"--version", "--", "config.yaml"},
+		{"--default-replicas=0", "false", "--leader-elect=false"},
+		{"--default-replicas=0", "config.yaml"},
+		{"--default-replicas=0", "config.yaml", "--default-replicas=2"},
+	} {
+		t.Run(strings.Join(args, " "), func(t *testing.T) {
+			originalFlags, originalArgs := flag.CommandLine, os.Args
+			t.Cleanup(func() {
+				flag.CommandLine, os.Args = originalFlags, originalArgs
+			})
+			flag.CommandLine = flag.NewFlagSet("hornkeeper", flag.ContinueOnError)
+			flag.CommandLine.SetOutput(io.Discard)
+			os.Args = append([]string{"hornkeeper"}, args...)
+			if err := run(); err == nil || !strings.Contains(err.Error(), "unexpected positional arguments") {
+				t.Fatalf("run(%q) error = %v, want unexpected positional arguments", args, err)
+			}
+		})
 	}
 }
