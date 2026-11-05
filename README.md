@@ -280,3 +280,5 @@ Publishing and deployment are separate actions.
 
 AGPL-3.0, following the sibling service repositories. Bundled Longhorn test schemas
 retain their upstream Apache-2.0 license in `internal/controller/testdata`.
+
+Publishing and manual recovery: [Publishing](docs/publishing.md).
