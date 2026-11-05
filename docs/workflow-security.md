@@ -23,38 +23,21 @@ reviewers must recheck the tag-to-commit mapping and source diff before merging.
 
 ## Release boundary
 
-Reusable read-only checks gate read-only build jobs. GoReleaser produces archives
-and checksums without publishing. The container build exports a multi-platform OCI
-archive and packages the chart, then hashes both. Upload artifacts are immutable;
-publishers download the exact artifact ID returned by that build in the same run,
-not a mutable artifact name. Checksums detect corrupted content before credentials
-are introduced. Trust remains in reviewed repository source, pinned Actions, and
-GitHub's runner/artifact service; checksums are not an independent signature.
+The pinned shared workflows enforce artifact checksums, separate builds from
+credentialed publication and serialize channel promotion. They embed their helper
+code at the caller's pinned revision. Publisher checkouts serve only Git ancestry
+and release identity checks; repository commands run only in read-only build jobs.
+See [Publishing](publishing.md) for triggers, versions, charts and manual recovery.
 
-Fresh publishers never check out repository source. Only the GitHub release job
-has contents:write; only the image/chart publisher has packages:write. Registry
-credentials are step scoped and temporary authentication files are removed on exit.
-Skopeo copies every platform from the verified OCI archive while preserving digests;
-Helm pushes the already-packaged chart. GitHub CLI publishes the verified archives
-with generated release notes. GoReleaser still builds the original archive contents.
-Release and manual container triggers remain unchanged.
-
-## Local validation
+Local caller policy checks reject mutable or unexpected reusable workflows,
+missing native-check gates, additional credentialed execution, broad secret
+inheritance, write tokens in checks and concurrency groups that allow races.
+Artifact tampering and registry behavior are tested in the shared repository.
 
 ```sh
-python3 -m venv /tmp/hornkeeper-workflows
-/tmp/hornkeeper-workflows/bin/pip install -r tests/helm/requirements.txt
-/tmp/hornkeeper-workflows/bin/python scripts/check_workflow_policy.py
-/tmp/hornkeeper-workflows/bin/python -m unittest discover -s tests/workflows -v
-actionlint
+python3 scripts/check_workflow_policy.py
+python3 -m unittest discover -s tests/workflows -v
 ```
-
-The checks workflow runs this policy and its regression tests before publication.
-Tests exercise mutable reference rejection, scope separation, persisted checkout
-credentials, artifact-ID selection, checksum tampering, and the actual publisher
-shell commands with mocked registry/Helm/GitHub clients. No real publication occurs.
-The shell mock requires Bash 4+ (as supplied by Ubuntu runners); on macOS the test
-uses Homebrew Bash when available.
 
 ## Reproducible integration bootstrap
 
