@@ -38,10 +38,15 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 		r.Metrics.Reconciles.WithLabelValues("ignored").Inc()
 		return ctrl.Result{}, nil
 	}
-	// Each field has its own patch so an admission rejection cannot block the other.
-	backupErr := r.reconcileField(ctx, req.NamespacedName, "backupTargetName")
-	replicasErr := r.reconcileField(ctx, req.NamespacedName, "numberOfReplicas")
-	if err := errors.Join(backupErr, replicasErr); err != nil {
+	// Each field has its own patch so an admission rejection cannot block the others.
+	var errs []error
+	for _, field := range volumeFields {
+		if _, exists := pvc.Labels[field.label]; field.optional() && !exists {
+			continue
+		}
+		errs = append(errs, r.reconcileField(ctx, req.NamespacedName, field))
+	}
+	if err := errors.Join(errs...); err != nil {
 		r.Metrics.Reconciles.WithLabelValues("error").Inc()
 		return ctrl.Result{}, err
 	}
@@ -84,7 +89,8 @@ func (r *Reconciler) resolve(ctx context.Context, key client.ObjectKey) (*corev1
 	return pvc, volume, nil
 }
 
-func (r *Reconciler) reconcileField(ctx context.Context, key client.ObjectKey, field string) error {
+func (r *Reconciler) reconcileField(ctx context.Context, key client.ObjectKey, f volumeField) error {
+	field := f.name
 	result := "waiting"
 	err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
 		// Direct API reads on every attempt re-check opt-in, binding and resourceVersion.
@@ -93,8 +99,12 @@ func (r *Reconciler) reconcileField(ctx context.Context, key client.ObjectKey, f
 			return err
 		}
 		log := ctrl.LoggerFrom(ctx).WithValues("volume", volume.GetName(), "field", field)
-		desired, err := r.desired(ctx, pvc, volume, field)
+		desired, err := r.desired(ctx, pvc, volume, f)
 		if err != nil {
+			if errors.Is(err, errUnmanaged) {
+				result = "unmanaged"
+				return nil
+			}
 			if isInvalid(err) {
 				result = "invalid"
 				log.Error(err, "Leaving field unchanged")
@@ -146,15 +156,30 @@ func isInvalid(err error) bool {
 	return errors.As(err, &value)
 }
 
-func (r *Reconciler) desired(ctx context.Context, pvc *corev1.PersistentVolumeClaim, volume *unstructured.Unstructured, field string) (any, error) {
-	switch field {
+func (r *Reconciler) desired(ctx context.Context, pvc *corev1.PersistentVolumeClaim, volume *unstructured.Unstructured, f volumeField) (any, error) {
+	switch f.name {
 	case "backupTargetName":
 		return r.desiredBackupTarget(ctx, pvc)
 	case "numberOfReplicas":
 		return r.desiredReplicas(ctx, pvc, volume)
-	default:
-		return nil, fmt.Errorf("unknown field %q", field)
 	}
+	if !f.optional() {
+		return nil, fmt.Errorf("unknown field %q", f.name)
+	}
+	value, exists := pvc.Labels[f.label]
+	if !exists {
+		return nil, errUnmanaged
+	}
+	parsed, err := f.parse(value)
+	if err != nil {
+		return nil, invalid(fmt.Errorf("%s=%q: %w", f.label, value, err))
+	}
+	if f.check != nil {
+		if err := f.check(volume, parsed); err != nil {
+			return nil, err
+		}
+	}
+	return parsed, nil
 }
 
 func (r *Reconciler) desiredBackupTarget(ctx context.Context, pvc *corev1.PersistentVolumeClaim) (string, error) {

@@ -10,9 +10,10 @@ import (
 )
 
 const (
-	EnabledLabel      = "hornkeeper.noqer.com/enabled"
-	BackupTargetLabel = "hornkeeper.noqer.com/backup-target"
-	ReplicasLabel     = "hornkeeper.noqer.com/replicas"
+	labelPrefix       = "hornkeeper.noqer.com/"
+	EnabledLabel      = labelPrefix + "enabled"
+	BackupTargetLabel = labelPrefix + "backup-target"
+	ReplicasLabel     = labelPrefix + "replicas"
 	LonghornDriver    = "driver.longhorn.io"
 )
 

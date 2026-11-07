@@ -15,7 +15,7 @@ func NewMetrics(reg prometheus.Registerer) *Metrics {
 		}, []string{"result"}),
 		Fields: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "hornkeeper_field_reconciliations_total",
-			Help: "Field reconciliations by field and result (patched, dry-run, unchanged, invalid, waiting, error).",
+			Help: "Field reconciliations by field and result (patched, dry-run, unchanged, invalid, waiting, unmanaged, error).",
 		}, []string{"field", "result"}),
 	}
 	reg.MustRegister(m.Reconciles, m.Fields)

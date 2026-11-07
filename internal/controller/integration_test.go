@@ -168,6 +168,40 @@ func TestDisposableAPIServer(t *testing.T) {
 	waitFor(t, func() bool { return assertSettings("default", 3) }, "override label event")
 	updateLabels(map[string]string{EnabledLabel: "true"})
 	waitFor(t, func() bool { return assertSettings("rustfs", 2) }, "override removal event")
+	// Every optional field must pass the real Longhorn schema with the patched type.
+	optional := map[string]string{
+		EnabledLabel: "true", DataLocalityLabel: "best-effort", ReplicaAutoBalanceLabel: "least-effort",
+		ReplicaSoftAntiAffinityLabel: "enabled", ReplicaZoneSoftAntiAffinityLabel: "disabled", ReplicaDiskSoftAntiAffinityLabel: "ignored",
+		SnapshotDataIntegrityLabel: "fast-check", UnmapMarkSnapChainRemovedLabel: "enabled", OfflineRebuildingLabel: "enabled",
+		FreezeFilesystemForSnapshotLabel: "disabled", SnapshotMaxCountLabel: "100", SnapshotMaxSizeLabel: "4Gi",
+		RebuildConcurrentSyncLimitLabel: "3", ReplicaRebuildingBandwidthLimitLabel: "0", UblkQueueDepthLabel: "64", UblkNumberOfQueueLabel: "2",
+	}
+	updateLabels(optional)
+	wantOptional := map[string]any{
+		"dataLocality": "best-effort", "replicaAutoBalance": "least-effort", "replicaSoftAntiAffinity": "enabled",
+		"replicaZoneSoftAntiAffinity": "disabled", "replicaDiskSoftAntiAffinity": "ignored", "snapshotDataIntegrity": "fast-check",
+		"unmapMarkSnapChainRemoved": "enabled", "offlineRebuilding": "enabled", "freezeFilesystemForSnapshot": "disabled",
+		"snapshotMaxCount": int64(100), "snapshotMaxSize": "4294967296", "rebuildConcurrentSyncLimit": int64(3),
+		"replicaRebuildingBandwidthLimit": int64(0), "ublkQueueDepth": int64(64), "ublkNumberOfQueue": int64(2),
+	}
+	waitFor(t, func() bool {
+		v := Resource(VolumeGVK)
+		if err := c.Get(ctx, client.ObjectKeyFromObject(volume), v); err != nil {
+			return false
+		}
+		for field, want := range wantOptional {
+			if got, _, _ := unstructured.NestedFieldNoCopy(v.Object, "spec", field); got != want {
+				return false
+			}
+		}
+		return true
+	}, "optional field labels")
+	for field := range wantOptional {
+		if got := testutil.ToFloat64(m.Fields.WithLabelValues(field, "error")); got != 0 {
+			t.Fatalf("%s patch errors: %v", field, got)
+		}
+	}
+	updateLabels(map[string]string{EnabledLabel: "true"})
 	if err := c.Get(ctx, client.ObjectKeyFromObject(volume), volume); err != nil {
 		t.Fatal(err)
 	}

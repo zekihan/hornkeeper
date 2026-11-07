@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
+	"slices"
 	"testing"
 
 	"github.com/prometheus/client_golang/prometheus"
@@ -92,7 +93,7 @@ func newFixture(t *testing.T) *fixture {
 				t.Fatalf("patch must own exactly one field: %s", data)
 			}
 			for key := range spec {
-				if key != "backupTargetName" && key != "numberOfReplicas" {
+				if !slices.ContainsFunc(volumeFields, func(f volumeField) bool { return f.name == key }) {
 					t.Fatalf("unowned field %q", key)
 				}
 			}
