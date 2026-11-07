@@ -9,6 +9,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/event"
 )
 
 func TestClaimBackupTargetIndex(t *testing.T) {
@@ -63,5 +64,40 @@ func TestDefaultTargetEventMapping(t *testing.T) {
 	target.SetNamespace("foreign")
 	if got := f.r.ClaimsForTarget(t.Context(), target); len(got) != 0 {
 		t.Fatalf("mapped foreign namespace target: %v", got)
+	}
+}
+
+func TestOptInPredicate(t *testing.T) {
+	claim := func(value string) client.Object {
+		pvc := &corev1.PersistentVolumeClaim{}
+		if value != "<absent>" {
+			pvc.Labels = map[string]string{EnabledLabel: value}
+		}
+		return pvc
+	}
+	for _, tc := range []struct {
+		value string
+		want  bool
+	}{{"true", true}, {"false", false}, {"<absent>", false}, {"enabled", true}, {"", true}} {
+		if got := optIn.Create(event.CreateEvent{Object: claim(tc.value)}); got != tc.want {
+			t.Errorf("create %q = %t, want %t", tc.value, got, tc.want)
+		}
+	}
+	for _, tc := range []struct {
+		old, new string
+		want     bool
+	}{
+		{"<absent>", "true", true},
+		{"true", "false", true},
+		{"false", "<absent>", false},
+		{"<absent>", "enabled", true},
+		{"false", "enabled", true},
+		{"enabled", "enabled", false},
+		{"enabled", "yes", true},
+		{"enabled", "false", false},
+	} {
+		if got := optIn.Update(event.UpdateEvent{ObjectOld: claim(tc.old), ObjectNew: claim(tc.new)}); got != tc.want {
+			t.Errorf("update %q -> %q = %t, want %t", tc.old, tc.new, got, tc.want)
+		}
 	}
 }

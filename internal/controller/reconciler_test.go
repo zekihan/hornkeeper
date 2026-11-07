@@ -1,14 +1,18 @@
 package controller
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"reflect"
 	"slices"
+	"strings"
 	"testing"
 
+	"github.com/go-logr/logr"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/testutil"
 	"github.com/zekihan/hornkeeper/internal/config"
@@ -155,7 +159,7 @@ func (f *fixture) settings(t *testing.T, target string, replicas int64) {
 }
 
 func TestOptIn(t *testing.T) {
-	for _, value := range []string{"", "false", "TRUE", "True", "1", "yes", " true"} {
+	for _, value := range []string{"", "false", "TRUE", "True", "1", "yes", " true", "enabled"} {
 		t.Run(value, func(t *testing.T) {
 			f := newFixture(t)
 			labels := map[string]string{BackupTargetLabel: "rustfs", ReplicasLabel: "2"}
@@ -169,12 +173,22 @@ func TestOptIn(t *testing.T) {
 				}
 				return c.Get(ctx, key, obj, opts...)
 			}})
-			if result := f.reconcile(t); result.RequeueAfter != 0 {
+			var logs bytes.Buffer
+			ctx := ctrl.LoggerInto(t.Context(), logr.FromSlogHandler(slog.NewJSONHandler(&logs, nil)))
+			result, err := f.r.Reconcile(ctx, ctrl.Request{NamespacedName: client.ObjectKeyFromObject(f.pvc)})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if result.RequeueAfter != 0 {
 				t.Fatal("disabled PVC was requeued")
 			}
 			f.settings(t, "default", 1)
 			if f.patches != 0 {
 				t.Fatal("disabled PVC was patched")
+			}
+			wantWarning := value != "" && value != "false"
+			if gotWarning := strings.Contains(logs.String(), `"level":"WARN"`); gotWarning != wantWarning {
+				t.Fatalf("warning logged = %t, want %t: %s", gotWarning, wantWarning, logs.String())
 			}
 		})
 	}

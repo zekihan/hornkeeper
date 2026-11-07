@@ -17,7 +17,9 @@ metadata:
 
 Only the exact string `"true"` enables management. Missing enabled labels,
 `"false"`, `"TRUE"` and every other value leave the volume untouched, even when
-there are override labels. PVCs in every namespace are observed; only bound
+there are override labels. Any value other than `"true"` or `"false"`, such as
+`enabled` copied from Longhorn's own PVC labels, is logged as a warning when it
+is set or changed. PVCs in every namespace are observed; only bound
 `driver.longhorn.io` PVs qualify.
 
 | PVC labels | Effective behavior |

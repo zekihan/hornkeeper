@@ -64,14 +64,6 @@ func (r *Reconciler) SetupWithManager(ctx context.Context, mgr ctrl.Manager) err
 			return err
 		}
 	}
-	optIn := predicate.Funcs{
-		CreateFunc: func(e event.CreateEvent) bool { return e.Object.GetLabels()[EnabledLabel] == "true" },
-		UpdateFunc: func(e event.UpdateEvent) bool {
-			return e.ObjectOld.GetLabels()[EnabledLabel] == "true" || e.ObjectNew.GetLabels()[EnabledLabel] == "true"
-		},
-		DeleteFunc:  func(event.DeleteEvent) bool { return false },
-		GenericFunc: func(e event.GenericEvent) bool { return e.Object.GetLabels()[EnabledLabel] == "true" },
-	}
 	return ctrl.NewControllerManagedBy(mgr).
 		Named("hornkeeper").
 		For(&corev1.PersistentVolumeClaim{}, builder.WithPredicates(optIn)).
@@ -79,6 +71,22 @@ func (r *Reconciler) SetupWithManager(ctx context.Context, mgr ctrl.Manager) err
 		Watches(Resource(VolumeGVK), handler.EnqueueRequestsFromMapFunc(r.ClaimsForVolume), builder.WithPredicates(predicate.GenerationChangedPredicate{})).
 		Watches(Resource(BackupTargetGVK), handler.EnqueueRequestsFromMapFunc(r.ClaimsForTarget)).
 		Complete(r)
+}
+
+var optIn = predicate.Funcs{
+	CreateFunc: func(e event.CreateEvent) bool { return optInEvent(e.Object) },
+	UpdateFunc: func(e event.UpdateEvent) bool {
+		oldValue, newValue := e.ObjectOld.GetLabels()[EnabledLabel], e.ObjectNew.GetLabels()[EnabledLabel]
+		// Unrecognized values are reconciled only when they change, so the warning is not repeated on every update.
+		return oldValue == "true" || newValue == "true" || (unrecognizedOptIn(e.ObjectNew) && oldValue != newValue)
+	},
+	DeleteFunc:  func(event.DeleteEvent) bool { return false },
+	GenericFunc: func(e event.GenericEvent) bool { return optInEvent(e.Object) },
+}
+
+// optInEvent admits enabled claims and claims whose opt-in value needs a warning.
+func optInEvent(obj client.Object) bool {
+	return obj.GetLabels()[EnabledLabel] == "true" || unrecognizedOptIn(obj)
 }
 
 func (r *Reconciler) ClaimsForPV(ctx context.Context, obj client.Object) []reconcile.Request {

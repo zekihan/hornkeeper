@@ -4,11 +4,13 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"reflect"
 	"strconv"
 	"strings"
 	"time"
 
+	"github.com/go-logr/logr"
 	"github.com/zekihan/hornkeeper/internal/config"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -35,6 +37,10 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 		return ctrl.Result{}, nil
 	}
 	if !enabled(pvc) {
+		if unrecognizedOptIn(pvc) {
+			slog.New(logr.ToSlogHandler(ctrl.LoggerFrom(ctx))).WarnContext(ctx, "Ignoring claim with unrecognized opt-in value; use \"true\" or \"false\"",
+				"label", EnabledLabel, "value", pvc.Labels[EnabledLabel])
+		}
 		r.Metrics.Reconciles.WithLabelValues("ignored").Inc()
 		return ctrl.Result{}, nil
 	}
@@ -56,6 +62,13 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 
 func enabled(pvc *corev1.PersistentVolumeClaim) bool {
 	return pvc.Labels[EnabledLabel] == "true" && pvc.DeletionTimestamp.IsZero()
+}
+
+// unrecognizedOptIn reports an enabled label that is neither "true" nor "false",
+// such as "enabled" copied from Longhorn's own PVC labels.
+func unrecognizedOptIn(obj client.Object) bool {
+	value, exists := obj.GetLabels()[EnabledLabel]
+	return exists && value != "true" && value != "false"
 }
 
 func (r *Reconciler) resolve(ctx context.Context, key client.ObjectKey) (*corev1.PersistentVolumeClaim, *unstructured.Unstructured, error) {
