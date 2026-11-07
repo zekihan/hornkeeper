@@ -6,7 +6,7 @@ backup target must already exist. Only PVCs labelled
 
 ```sh
 helm upgrade --install hornkeeper oci://ghcr.io/zekihan/charts/hornkeeper \
-  --version 0.1.5 --namespace hornkeeper --create-namespace \
+  --version 0.1.6 --namespace hornkeeper --create-namespace \
   --set controller.defaultBackupTarget=rustfs \
   --set controller.defaultReplicas=2
 ```
