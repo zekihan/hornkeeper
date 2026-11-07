@@ -7,11 +7,14 @@ webhook for validation of the complete volume.
 
 | Contract | Upstream source |
 | --- | --- |
-| Namespaced Volume spec: string `backupTargetName`, integer `numberOfReplicas` | [volume.go](https://github.com/longhorn/longhorn-manager/blob/20d9c0790312b45aafd5668674e73dbf2eba1832/k8s/pkg/apis/longhorn/v1beta2/volume.go) |
+| Namespaced Volume spec: string `backupTargetName`, integer `numberOfReplicas`, and the optional fields' types (`snapshotMaxSize` is an int64 encoded as a string) | [volume.go](https://github.com/longhorn/longhorn-manager/blob/20d9c0790312b45aafd5668674e73dbf2eba1832/k8s/pkg/apis/longhorn/v1beta2/volume.go) |
 | Served API schemas, including backup targets | [crds.yaml](https://github.com/longhorn/longhorn-manager/blob/20d9c0790312b45aafd5668674e73dbf2eba1832/k8s/crds.yaml) |
 | Replica bounds 1–20 | [setting.go](https://github.com/longhorn/longhorn-manager/blob/20d9c0790312b45aafd5668674e73dbf2eba1832/types/setting.go), `SettingDefinitionDefaultReplicaCount` |
 | Strict-local requires 1 | [types.go](https://github.com/longhorn/longhorn-manager/blob/20d9c0790312b45aafd5668674e73dbf2eba1832/types/types.go), `ValidateDataLocalityAndReplicaCount` |
 | Updates, target existence, sharded and clone restrictions | [validator.go](https://github.com/longhorn/longhorn-manager/blob/20d9c0790312b45aafd5668674e73dbf2eba1832/webhook/resources/volume/validator.go), `Update`, `validateReplicaCount`, `validateShardedConstraints`, `validateBackupTarget` |
+| Optional field values and constraints: data locality transitions, ublk depth, snapshot limits, zone pinning | [validator.go](https://github.com/longhorn/longhorn-manager/blob/20d9c0790312b45aafd5668674e73dbf2eba1832/webhook/resources/volume/validator.go), `validateDataLocalityUpdate`, `validateUblkQueueDepth`, `validateSnapshotMaxCount`, `validateSnapshotMaxSize`, `validateTopologyZonePin` |
+| Enum values and data-engine restrictions for optional fields | [types.go](https://github.com/longhorn/longhorn-manager/blob/20d9c0790312b45aafd5668674e73dbf2eba1832/types/types.go), `ValidateReplicaAutoBalance`, `ValidateUnmapMarkSnapChainRemoved`, `ValidateReplicaRebuildingBandwidthLimit` and siblings |
+| User-mutable settings: each optional field has a per-volume REST update action | [manager/volume.go](https://github.com/longhorn/longhorn-manager/blob/20d9c0790312b45aafd5668674e73dbf2eba1832/manager/volume.go), `Update*` |
 | REST actions have separate operational gates | [manager/volume.go](https://github.com/longhorn/longhorn-manager/blob/20d9c0790312b45aafd5668674e73dbf2eba1832/manager/volume.go), `UpdateReplicaCount`, `UpdateVolumeBackupTarget` |
 | Destination selection and backup initiation | [backup_controller.go](https://github.com/longhorn/longhorn-manager/blob/20d9c0790312b45aafd5668674e73dbf2eba1832/controller/backup_controller.go), `getBackupTargetName`, `reconcile` |
 
@@ -19,7 +22,15 @@ webhook for validation of the complete volume.
 
 Hornkeeper validates startup defaults and label syntax, target existence and
 non-deletion, the replica range, strict-local/sharded replica counts and the legacy
-linked-clone replica immutability marker. It leaves the invalid field unchanged.
+linked-clone replica immutability marker. For optional fields it validates enum
+values and integer ranges, strict-local replica and detachment requirements,
+sharded locality, data-engine restrictions, ublk queue depth, the snapshot size
+floor and zone-pinned anti-affinity. It leaves the invalid field unchanged.
+
+Optional fields are those with a Longhorn REST `Update*` action, except access
+mode (Kubernetes PV access modes are immutable, so changing Longhorn's would
+diverge from the PV) and backup compression method (immutable once the mutator
+sets it). Snapshot usage limits and migration restrictions are left to admission.
 
 The target resource's existence is sufficient for Longhorn's target update
 validator; it does not prove credentials, connectivity or a usable backup URL.

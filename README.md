@@ -36,9 +36,58 @@ configured Longhorn namespace. Replicas must be decimal integers from 1 to 20;
 strict-local and sharded volumes require 1. Legacy linked-clone volumes cannot
 change replica count. Longhorn admission validates further clone dependencies.
 
-The controller writes only `Volume.spec.backupTargetName` and
-`Volume.spec.numberOfReplicas`. It does not create targets, migrate backups,
-modify recurring jobs, replicas, credentials or backup resources. In the homelab,
+### Optional volume settings
+
+Every other Longhorn volume setting that Longhorn v1.13.0 lets users change after
+creation has an optional label. These labels have no controller default: without
+the label hornkeeper never touches the field. With the label, hornkeeper enforces
+the value and corrects drift while the claim is enabled. Removing the label stops
+enforcement and keeps the current volume value. `ignored` means "follow the
+Longhorn global setting".
+
+| Label (`hornkeeper.noqer.com/...`) | Volume spec field | Accepted values |
+| --- | --- | --- |
+| `data-locality` | `dataLocality` | `disabled`, `best-effort`, `strict-local` |
+| `replica-auto-balance` | `replicaAutoBalance` | `ignored`, `disabled`, `least-effort`, `best-effort` |
+| `replica-soft-anti-affinity` | `replicaSoftAntiAffinity` | `ignored`, `enabled`, `disabled` |
+| `replica-zone-soft-anti-affinity` | `replicaZoneSoftAntiAffinity` | `ignored`, `enabled`, `disabled` |
+| `replica-disk-soft-anti-affinity` | `replicaDiskSoftAntiAffinity` | `ignored`, `enabled`, `disabled` |
+| `snapshot-data-integrity` | `snapshotDataIntegrity` | `ignored`, `disabled`, `enabled`, `fast-check` |
+| `unmap-mark-snap-chain-removed` | `unmapMarkSnapChainRemoved` | `ignored`, `disabled`, `enabled` |
+| `offline-rebuilding` | `offlineRebuilding` | `ignored`, `disabled`, `enabled` |
+| `freeze-filesystem-for-snapshot` | `freezeFilesystemForSnapshot` | `ignored`, `enabled`, `disabled` |
+| `snapshot-max-count` | `snapshotMaxCount` | Integer from 2 to 250 |
+| `snapshot-max-size` | `snapshotMaxSize` | Byte quantity, e.g. `0` (unlimited) or `20Gi` |
+| `rebuild-concurrent-sync-limit` | `rebuildConcurrentSyncLimit` | Integer from 0 to 5; 0 follows the global setting |
+| `replica-rebuilding-bandwidth-limit` | `replicaRebuildingBandwidthLimit` | MB/s as a non-negative integer; 0 disables the limit |
+| `ublk-queue-depth` | `ublkQueueDepth` | 0 or an integer of at least 32 |
+| `ublk-number-of-queue` | `ublkNumberOfQueue` | Non-negative integer; 0 means unspecified |
+
+Hornkeeper checks the same constraints as Longhorn's admission webhook before
+patching and leaves the field unchanged when they fail:
+
+- `strict-local` requires 1 replica, and converting to or from `strict-local`
+  requires a detached volume. Sharded volumes require `disabled`.
+- `snapshot-max-size` must be `0` or at least twice the volume size.
+- `unmap-mark-snap-chain-removed` must be `disabled` for data engine v2.
+- `replica-rebuilding-bandwidth-limit` other than `0` requires data engine v2.
+- `replica-zone-soft-anti-affinity` must be `enabled` on a volume pinned to one zone.
+
+Longhorn also rejects lowering `snapshot-max-count` or `snapshot-max-size` below
+current snapshot usage, or changing them during migration; those rejections are
+retried like any other admission failure. Switching to `strict-local` and to 1
+replica converges over consecutive reconciliations: the replica count changes
+first, then locality on the next periodic retry.
+
+Settings Longhorn fixes at creation or owns operationally are deliberately not
+exposed: access mode, size, data engine, frontend, encryption, backing image,
+data source, clone mode, backup compression method and block size, topology,
+node/disk selectors, stale replica timeout, NVMe-TCP queues, migration and
+attachment fields.
+
+The controller writes only the Volume spec fields listed above. It does not
+create targets, migrate backups, modify recurring jobs, replicas, credentials or
+backup resources. In the homelab,
 `default` is the existing Backblaze target and `rustfs` is the existing RustFS
 target. Their configuration remains owned by Longhorn and your deployment.
 
@@ -188,7 +237,8 @@ policy is valid.
 metrics, plus:
 
 - `hornkeeper_reconciliations_total{result="ignored|enabled|error"}`.
-- `hornkeeper_field_reconciliations_total{field="backupTargetName|numberOfReplicas",result="patched|unchanged|invalid|waiting|error"}`.
+- `hornkeeper_field_reconciliations_total{field="<Volume spec field>",result="patched|dry-run|unchanged|invalid|waiting|unmanaged|error"}`.
+  Optional fields are counted only while their label is set.
 
 Metrics have no PVC/volume labels, avoiding per-volume cardinality. Invalid
 labels are nonfatal and show up in field metrics and logs; alerts should include
@@ -232,7 +282,7 @@ verified; review admission and controller behavior before changing versions.
 | --- | --- |
 | Startup fails | Default target exists in the configured namespace; RBAC/discovery and API connectivity work |
 | Enabled claim stays waiting | PVC/PV Bound phases, matching claimRef UID, CSI driver/handle and Longhorn volume existence |
-| One field does not change | Invalid/empty override, missing target, strict-local/sharded/legacy constraints, admission rejection logs |
+| One field does not change | Invalid/empty override, missing target, strict-local/sharded/legacy/data-engine constraints, attached volume for strict-local changes, admission rejection logs |
 | Target later becomes available | Target event and periodic retry will reconcile automatically |
 | Desired replicas updated but degraded | Longhorn scheduling/rebuild status, disk capacity, replica placement and engine state |
 | Manual changes revert | Expected while opted in; disable management before manually owning those fields |
