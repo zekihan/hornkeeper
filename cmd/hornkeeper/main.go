@@ -46,6 +46,7 @@ func run() error {
 	flag.StringVar(&cfg.LeaderNamespace, "leader-election-namespace", cfg.LeaderNamespace, "Namespace for the leader election Lease")
 	flag.StringVar(&cfg.MetricsAddress, "metrics-bind-address", cfg.MetricsAddress, "HTTP metrics address; 0 disables metrics")
 	flag.StringVar(&cfg.HealthAddress, "health-probe-bind-address", cfg.HealthAddress, "HTTP health probe address")
+	flag.BoolVar(&cfg.DryRun, "dry-run", cfg.DryRun, "Log intended volume changes without applying them")
 	flag.StringVar(&logLevel, "log-level", "info", "Log level: debug, info, warn, error")
 	flag.BoolVar(&showVersion, "version", false, "Print version and exit")
 	flag.Parse()
@@ -101,7 +102,12 @@ func run() error {
 	if err := controller.CheckBackupTarget(startupCtx, mgr.GetAPIReader(), cfg.LonghornNamespace, cfg.BackupTarget); err != nil {
 		return fmt.Errorf("validate default backup target at startup: %w", err)
 	}
-	r := &controller.Reconciler{Client: mgr.GetClient(), Reader: mgr.GetAPIReader(), Config: cfg, Metrics: controller.NewMetrics(metrics.Registry)}
+	c := mgr.GetClient()
+	if cfg.DryRun {
+		// Any write that reaches the API server is validated but never persisted.
+		c = client.NewDryRunClient(c)
+	}
+	r := &controller.Reconciler{Client: c, Reader: mgr.GetAPIReader(), Config: cfg, Metrics: controller.NewMetrics(metrics.Registry)}
 	if err := r.SetupWithManager(ctx, mgr); err != nil {
 		return fmt.Errorf("set up watches: %w", err)
 	}
@@ -120,7 +126,7 @@ func run() error {
 		slog.WarnContext(ctx, "Metrics endpoint exposed on non-localhost address without authentication; consider restricting network access", "address", cfg.MetricsAddress)
 	}
 	slog.InfoContext(ctx, "Starting hornkeeper", "version", version, "longhornNamespace", cfg.LonghornNamespace,
-		"defaultBackupTarget", cfg.BackupTarget, "defaultReplicas", cfg.Replicas, "leaderElection", cfg.LeaderElection)
+		"defaultBackupTarget", cfg.BackupTarget, "defaultReplicas", cfg.Replicas, "leaderElection", cfg.LeaderElection, "dryRun", cfg.DryRun)
 	return mgr.Start(ctx)
 }
 

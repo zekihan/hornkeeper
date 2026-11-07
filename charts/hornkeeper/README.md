@@ -30,6 +30,7 @@ namespace and `controller.longhornNamespace` must exist before installation;
 | `controller.defaultReplicas` | `3` | Desired Longhorn replicas, from 1 to 20 |
 | `controller.resyncInterval` | `1m` | Positive reconciliation interval |
 | `controller.leaderElection` | `true` | Lease coordination in the release namespace |
+| `controller.dryRun` | `false` | Log intended volume changes without patching them |
 | `controller.logLevel` | `info` | `debug`, `info`, `warn` or `error` |
 | `rbac.create` | `true` | Create least-privilege cluster and namespace permissions |
 | `serviceAccount.create` | `true` | Create the controller ServiceAccount |

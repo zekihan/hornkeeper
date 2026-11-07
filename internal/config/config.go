@@ -17,6 +17,7 @@ type Config struct {
 	LeaderNamespace   string
 	MetricsAddress    string
 	HealthAddress     string
+	DryRun            bool
 }
 
 func Default() Config {

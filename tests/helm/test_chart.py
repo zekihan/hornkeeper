@@ -90,6 +90,11 @@ class ChartTests(unittest.TestCase):
         self.assertNotEqual(get(items, "ClusterRole")["metadata"]["name"],
                             get(other_namespace, "ClusterRole")["metadata"]["name"])
         self.assertIn("--leader-elect=true", args)
+        self.assertNotIn("--dry-run", args)
+
+    def test_dry_run_flag(self):
+        container = get(resources({"controller": {"dryRun": True}}), "Deployment")["spec"]["template"]["spec"]["containers"][0]
+        self.assertIn("--dry-run", container["args"])
 
     def test_disabled_leader_election_uses_recreate_strategy(self):
         deployment = get(resources({"replicaCount": 1, "controller": {"leaderElection": False}}), "Deployment")

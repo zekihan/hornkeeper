@@ -15,6 +15,7 @@ controller:
   defaultReplicas: 3
   resyncInterval: 1m
   leaderElection: true
+  dryRun: false
   logLevel: info
 
 rbac:

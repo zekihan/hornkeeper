@@ -71,6 +71,7 @@ Configuration is supplied through command-line flags:
 | `--leader-election-namespace` | `hornkeeper` | Namespace for Lease `hornkeeper.noqer.com` |
 | `--metrics-bind-address` | `:8080` | HTTP metrics address; `0` disables it |
 | `--health-probe-bind-address` | `:8081` | HTTP health and readiness address |
+| `--dry-run` | `false` | Log intended volume changes without patching anything |
 | `--log-level` | `info` | `debug`, `info`, `warn` or `error` |
 | `--version` | — | Print version and exit without Kubernetes access |
 

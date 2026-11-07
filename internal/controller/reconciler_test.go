@@ -621,3 +621,23 @@ func TestInitialClaimReadErrorMetrics(t *testing.T) {
 		})
 	}
 }
+
+func TestDryRunLeavesVolumeUnchanged(t *testing.T) {
+	f := newFixture(t)
+	f.r.Config.DryRun = true
+	before := f.getVolume(t)
+	if result := f.reconcile(t); result.RequeueAfter != f.r.Config.ResyncInterval {
+		t.Fatal("missing periodic retry")
+	}
+	if f.patches != 0 {
+		t.Fatalf("dry run wrote %d patches", f.patches)
+	}
+	if after := f.getVolume(t); !reflect.DeepEqual(before.Object, after.Object) {
+		t.Fatalf("dry run changed the volume: %v", after.Object)
+	}
+	for _, field := range []string{"backupTargetName", "numberOfReplicas"} {
+		if got := testutil.ToFloat64(f.r.Metrics.Fields.WithLabelValues(field, "dry-run")); got != 1 {
+			t.Fatalf("%s dry-run count = %v, want 1", field, got)
+		}
+	}
+}

@@ -110,6 +110,11 @@ func (r *Reconciler) reconcileField(ctx context.Context, key client.ObjectKey, f
 			result = "unchanged"
 			return nil
 		}
+		if r.Config.DryRun {
+			result = "dry-run"
+			log.Info("Dry run: would update desired volume setting", "previous", current, "desired", desired)
+			return nil
+		}
 		base := volume.DeepCopy()
 		if err := unstructured.SetNestedField(volume.Object, desired, "spec", field); err != nil {
 			return err
