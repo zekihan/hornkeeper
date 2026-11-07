@@ -8,7 +8,7 @@ server and etcd using envtest, with the upstream v1.13.0 Volume/BackupTarget sch
 It does not use your kubeconfig. No controller hooks or application CRDs are added.
 
 The integration case exercises pending-to-bound PVC transitions, restored CSI
-handles, label overrides/removal, target creation and inherited-default recovery,
+handles, annotation overrides/removal, target creation and inherited-default recovery,
 drift correction, disabling,
 real resourceVersion conflicts and unrelated fields. Its periodic interval is five
 minutes and event assertions time out after fifteen seconds, so successful checks
@@ -47,7 +47,7 @@ homelab context for this exercise.
    reference, and apply `deploy/` against the explicit disposable kubeconfig.
 4. Create one unlabelled PVC and one PVC with enabled only. Write known content.
    Check the unlabelled volume stays unchanged and the enabled one gets defaults.
-5. Add target/replica overrides; observe spec changes separately from Longhorn's
+5. Add target/replica override annotations; observe spec changes separately from Longhorn's
    eventual replica scheduling/rebuilding. Check healthy replicas after writes.
 6. Remove each override; check that field returns to default. Manually drift both
    fields and confirm correction. Disable management, drift again and confirm

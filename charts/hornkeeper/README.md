@@ -2,7 +2,7 @@
 
 Install one hornkeeper release per cluster. Longhorn v1.13.0 and the selected
 backup target must already exist. Only PVCs labelled
-`hornkeeper.noqer.com/enabled: "true"` are managed.
+`hornkeeper.noqer.com/enabled: "true"` are managed; settings are PVC annotations.
 
 ```sh
 helm upgrade --install hornkeeper oci://ghcr.io/zekihan/charts/hornkeeper \
@@ -52,7 +52,7 @@ during an update. The health listener and probes remain enabled when metrics are
 
 Changing defaults affects all enabled claims without the corresponding override.
 Updating the desired replica count does not mean Longhorn has finished rebuilding.
-See the application's README for label behavior, permissions and troubleshooting.
+See the application's README for label and annotation behavior, permissions and troubleshooting.
 
 Release tags must match the repository's `VERSION`. The container release workflow
 publishes the chart with that version and `appVersion` after the application image

@@ -1,5 +1,6 @@
 hornkeeper watches PVCs across the cluster and manages only claims labelled
-hornkeeper.noqer.com/enabled="true".
+hornkeeper.noqer.com/enabled="true". Settings such as backup-target and
+replicas are PVC annotations, not labels.
 
 Longhorn must exist in {{ .Values.controller.longhornNamespace }} and backup
 target {{ .Values.controller.defaultBackupTarget }} must already exist.

@@ -5,6 +5,7 @@ metadata:
   namespace: default
   labels:
     hornkeeper.noqer.com/enabled: "true"
+  annotations:
     hornkeeper.noqer.com/backup-target: rustfs
     hornkeeper.noqer.com/replicas: "2"
 spec:

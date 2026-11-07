@@ -1,28 +1,43 @@
 # hornkeeper
 
 A small Go Kubernetes controller that keeps opted-in Longhorn volumes' backup
-target and desired replica count in sync with PVC labels. It manages existing and
+target and desired replica count in sync with PVC metadata. It manages existing and
 restored volumes as well as newly bound claims. It uses Longhorn's existing API;
 there are no hornkeeper CRDs or deployment hooks.
 
-## Labels
+## Labels and annotations
 
 ```yaml
 metadata:
   labels:
     hornkeeper.noqer.com/enabled: "true"
+  annotations:
     hornkeeper.noqer.com/backup-target: rustfs
     hornkeeper.noqer.com/replicas: "2"
 ```
 
-Only the exact string `"true"` enables management. Missing enabled labels,
+The `enabled` opt-in is a label; every setting is an annotation. Settings set as
+labels are ignored.
+
+> **Breaking change:** settings were labels up to 0.1.6. Move every
+> `hornkeeper.noqer.com/*` key except `enabled` from `metadata.labels` to
+> `metadata.annotations` before upgrading. Otherwise enabled claims return to the
+> controller defaults and optional settings stop being enforced. There is no
+> fallback to labels.
+>
+> ```sh
+> kubectl annotate pvc -n <namespace> <claim> hornkeeper.noqer.com/replicas=2
+> kubectl label pvc -n <namespace> <claim> hornkeeper.noqer.com/replicas-
+> ```
+
+Only the exact string `"true"` enables management. A missing enabled label,
 `"false"`, `"TRUE"` and every other value leave the volume untouched, even when
-there are override labels. Any value other than `"true"` or `"false"`, such as
+there are override annotations. Any value other than `"true"` or `"false"`, such as
 `enabled` copied from Longhorn's own PVC labels, is logged as a warning when it
 is set or changed. PVCs in every namespace are observed; only bound
 `driver.longhorn.io` PVs qualify.
 
-| PVC labels | Effective behavior |
+| PVC metadata | Effective behavior |
 | --- | --- |
 | enabled only | Enforce controller defaults for both fields |
 | enabled plus backup-target | Override only the backup target |
@@ -41,13 +56,13 @@ change replica count. Longhorn admission validates further clone dependencies.
 ### Optional volume settings
 
 Every other Longhorn volume setting that Longhorn v1.13.0 lets users change after
-creation has an optional label. These labels have no controller default: without
-the label hornkeeper never touches the field. With the label, hornkeeper enforces
-the value and corrects drift while the claim is enabled. Removing the label stops
-enforcement and keeps the current volume value. `ignored` means "follow the
-Longhorn global setting".
+creation has an optional annotation. These annotations have no controller default:
+without the annotation hornkeeper never touches the field. With the annotation,
+hornkeeper enforces the value and corrects drift while the claim is enabled.
+Removing the annotation stops enforcement and keeps the current volume value.
+`ignored` means "follow the Longhorn global setting".
 
-| Label (`hornkeeper.noqer.com/...`) | Volume spec field | Accepted values |
+| Annotation (`hornkeeper.noqer.com/...`) | Volume spec field | Accepted values |
 | --- | --- | --- |
 | `data-locality` | `dataLocality` | `disabled`, `best-effort`, `strict-local` |
 | `replica-auto-balance` | `replicaAutoBalance` | `ignored`, `disabled`, `least-effort`, `best-effort` |
@@ -193,7 +208,7 @@ resource limits and health/readiness probes.
 No PVC/PV writes, Longhorn status writes, Secret access, or writes to targets,
 replicas and backups are needed. Kubernetes RBAC cannot restrict patch access by
 PVC opt-in labels or by JSON field. The service account can patch volumes in the
-Longhorn namespace; the controller enforces the label and field boundaries.
+Longhorn namespace; the controller enforces the opt-in and field boundaries.
 Lease creation cannot be restricted by resource name in RBAC, so it is limited to
 the dedicated controller namespace.
 
@@ -205,7 +220,7 @@ Longhorn volume from the PV CSI `volumeHandle`, never from the PVC UID. Missing
 PVs/volumes are retried; existing resources are reconciled on startup. Restore
 source fields are left unchanged.
 
-PVC label/binding changes, PV changes, Longhorn volume spec changes and target
+PVC label/annotation/binding changes, PV changes, Longhorn volume spec changes and target
 changes trigger reconciliation. Indexed reverse lookups map volume events to
 claims. A periodic retry also covers missed events and transient restrictions.
 Each field gets a separate resourceVersion-protected merge patch. Conflicts cause
@@ -213,7 +228,7 @@ fresh reads and bounded immediate retries, followed by the work queue's backoff.
 Other failures are retried with backoff. Each reconciliation has a 30-second
 context deadline; watch streams remain long-lived. Every attempt reads current opt-in and
 binding directly from the API; disabling stops queued/retried work. Kubernetes
-cannot atomically transact a PVC label and a Volume patch, so a patch already
+cannot atomically transact a PVC update and a Volume patch, so a patch already
 submitted during a simultaneous disable can finish.
 
 Successful patching means the desired Longhorn spec changed. **It does not mean
@@ -223,7 +238,7 @@ storage, placement or availability prevents rebuilding. Inspect Longhorn health
 and replica state to determine completion.
 
 Logs are JSON on stderr. Changed fields include claim/reconcile context, volume,
-field, previous and desired values. Invalid labels/constraints and rejected
+field, previous and desired values. Invalid annotations/constraints and rejected
 patches produce field-specific diagnostics. The controller does not annotate PVCs
 or emit PVC events.
 
@@ -240,10 +255,10 @@ metrics, plus:
 
 - `hornkeeper_reconciliations_total{result="ignored|enabled|error"}`.
 - `hornkeeper_field_reconciliations_total{field="<Volume spec field>",result="patched|dry-run|unchanged|invalid|waiting|unmanaged|error"}`.
-  Optional fields are counted only while their label is set.
+  Optional fields are counted only while their annotation is set.
 
 Metrics have no PVC/volume labels, avoiding per-volume cardinality. Invalid
-labels are nonfatal and show up in field metrics and logs; alerts should include
+annotations are nonfatal and show up in field metrics and logs; alerts should include
 invalid fields as well as reconciliation errors. The example metrics Service is
 ClusterIP. Metrics/probe HTTP has no authentication; restrict network access to
 monitoring and the kubelet when your cluster policy requires it.
@@ -301,7 +316,7 @@ make container-test
 make release-check
 ```
 
-Unit tests cover label lifecycle, defaults/overrides, invalid fields, pending
+Unit tests cover annotation lifecycle, defaults/overrides, invalid fields, pending
 binding, restored handles, drift, no-op writes, conflicts, admission rejection and
 unrelated field preservation. `test/integration` launches a disposable etcd/API
 server and installs only upstream Longhorn schemas in that test environment.

@@ -20,7 +20,7 @@ webhook for validation of the complete volume.
 
 ## Validation boundary
 
-Hornkeeper validates startup defaults and label syntax, target existence and
+Hornkeeper validates startup defaults and annotation syntax, target existence and
 non-deletion, the replica range, strict-local/sharded replica counts and the legacy
 linked-clone replica immutability marker. For optional fields it validates enum
 values and integer ranges, strict-local replica and detachment requirements,

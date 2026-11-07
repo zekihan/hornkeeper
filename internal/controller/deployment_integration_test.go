@@ -109,7 +109,7 @@ func TestExamplePermissionsAndLeaderFailover(t *testing.T) {
 		t.Fatal(err)
 	}
 	forbidden(sa.Update(ctx, pvc))
-	pvc.Labels = map[string]string{EnabledLabel: "true"}
+	pvc.Labels, pvc.Annotations = map[string]string{EnabledLabel: "true"}, nil
 	if err := admin.Update(ctx, pvc); err != nil {
 		t.Fatal(err)
 	}
