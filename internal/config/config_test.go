@@ -59,7 +59,8 @@ func TestBackupTargetMustNameKubernetesResource(t *testing.T) {
 		{"backup..target", false},
 		{"backup.-target", false},
 		{"backup-.target", false},
-		{strings.Repeat("a", 64), false},
+		{strings.Repeat("a", 64), true},
+		{strings.Repeat("a", 254), false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			cfg := Default()

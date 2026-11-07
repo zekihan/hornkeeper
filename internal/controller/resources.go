@@ -10,11 +10,11 @@ import (
 )
 
 const (
-	labelPrefix       = "hornkeeper.noqer.com/"
-	EnabledLabel      = labelPrefix + "enabled"
-	BackupTargetLabel = labelPrefix + "backup-target"
-	ReplicasLabel     = labelPrefix + "replicas"
-	LonghornDriver    = "driver.longhorn.io"
+	keyPrefix              = "hornkeeper.noqer.com/"
+	EnabledLabel           = keyPrefix + "enabled"
+	BackupTargetAnnotation = keyPrefix + "backup-target"
+	ReplicasAnnotation     = keyPrefix + "replicas"
+	LonghornDriver         = "driver.longhorn.io"
 )
 
 var (

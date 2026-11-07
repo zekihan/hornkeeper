@@ -108,8 +108,9 @@ func TestBackupTargetMatchesRuntime(t *testing.T) {
 		{"one character", "a", true},
 		{"63 characters", strings.Repeat("a", 63), true},
 		{"63 characters with dot", strings.Repeat("a", 31) + "." + strings.Repeat("b", 31), true},
-		{"64 characters", strings.Repeat("a", 64), false},
-		{"253 characters", strings.Repeat("a", 253), false},
+		{"64 characters", strings.Repeat("a", 64), true},
+		{"253 characters", strings.Repeat("a", 253), true},
+		{"254 characters", strings.Repeat("a", 254), false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			cfg := config.Default()

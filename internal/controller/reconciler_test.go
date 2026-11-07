@@ -123,13 +123,29 @@ func (f *fixture) reconcile(t *testing.T) ctrl.Result {
 	}
 	return result
 }
-func (f *fixture) labels(t *testing.T, labels map[string]string) {
+
+// splitMetadata places the opt-in key in labels and every setting in annotations.
+func splitMetadata(keys map[string]string) (labels, annotations map[string]string) {
+	for k, v := range keys {
+		if k == EnabledLabel {
+			labels = map[string]string{k: v}
+			continue
+		}
+		if annotations == nil {
+			annotations = map[string]string{}
+		}
+		annotations[k] = v
+	}
+	return labels, annotations
+}
+
+func (f *fixture) metadata(t *testing.T, keys map[string]string) {
 	t.Helper()
 	pvc := &corev1.PersistentVolumeClaim{}
 	if err := f.c.Get(t.Context(), client.ObjectKeyFromObject(f.pvc), pvc); err != nil {
 		t.Fatal(err)
 	}
-	pvc.Labels = labels
+	pvc.Labels, pvc.Annotations = splitMetadata(keys)
 	if err := f.c.Update(t.Context(), pvc); err != nil {
 		t.Fatal(err)
 	}
@@ -162,11 +178,11 @@ func TestOptIn(t *testing.T) {
 	for _, value := range []string{"", "false", "TRUE", "True", "1", "yes", " true", "enabled"} {
 		t.Run(value, func(t *testing.T) {
 			f := newFixture(t)
-			labels := map[string]string{BackupTargetLabel: "rustfs", ReplicasLabel: "2"}
+			labels := map[string]string{BackupTargetAnnotation: "rustfs", ReplicasAnnotation: "2"}
 			if value != "" {
 				labels[EnabledLabel] = value
 			}
-			f.labels(t, labels)
+			f.metadata(t, labels)
 			f.r.Reader = interceptor.NewClient(f.c, interceptor.Funcs{Get: func(ctx context.Context, c client.WithWatch, key client.ObjectKey, obj client.Object, opts ...client.GetOption) error {
 				if _, ok := obj.(*corev1.PersistentVolumeClaim); !ok {
 					t.Fatal("disabled claim must not read PV or Longhorn objects")
@@ -194,6 +210,23 @@ func TestOptIn(t *testing.T) {
 	}
 }
 
+func TestSettingsAsLabelsAreIgnored(t *testing.T) {
+	f := newFixture(t)
+	pvc := &corev1.PersistentVolumeClaim{}
+	if err := f.c.Get(t.Context(), client.ObjectKeyFromObject(f.pvc), pvc); err != nil {
+		t.Fatal(err)
+	}
+	pvc.Labels = map[string]string{EnabledLabel: "true", BackupTargetAnnotation: "default", ReplicasAnnotation: "3", SnapshotMaxCountAnnotation: "100"}
+	if err := f.c.Update(t.Context(), pvc); err != nil {
+		t.Fatal(err)
+	}
+	f.reconcile(t)
+	f.settings(t, "rustfs", 2)
+	if got := f.specField(t, "snapshotMaxCount"); got != nil {
+		t.Fatalf("label-only optional field was set: %v", got)
+	}
+}
+
 func TestDefaultsOverridesRemovalDisablingAndDrift(t *testing.T) {
 	f := newFixture(t)
 	before := f.getVolume(t).DeepCopy()
@@ -206,13 +239,13 @@ func TestDefaultsOverridesRemovalDisablingAndDrift(t *testing.T) {
 	if f.patches != patched {
 		t.Fatal("no-op reconcile wrote a patch")
 	}
-	f.labels(t, map[string]string{EnabledLabel: "true", BackupTargetLabel: "default", ReplicasLabel: "3"})
+	f.metadata(t, map[string]string{EnabledLabel: "true", BackupTargetAnnotation: "default", ReplicasAnnotation: "3"})
 	f.reconcile(t)
 	f.settings(t, "default", 3)
-	f.labels(t, map[string]string{EnabledLabel: "true", ReplicasLabel: "3"})
+	f.metadata(t, map[string]string{EnabledLabel: "true", ReplicasAnnotation: "3"})
 	f.reconcile(t)
 	f.settings(t, "rustfs", 3)
-	f.labels(t, map[string]string{EnabledLabel: "true"})
+	f.metadata(t, map[string]string{EnabledLabel: "true"})
 	f.reconcile(t)
 	f.settings(t, "rustfs", 2)
 	v := f.getVolume(t)
@@ -226,8 +259,8 @@ func TestDefaultsOverridesRemovalDisablingAndDrift(t *testing.T) {
 	f.r = &copy
 	f.reconcile(t)
 	f.settings(t, "rustfs", 2)
-	for _, labels := range []map[string]string{{EnabledLabel: "false", ReplicasLabel: "5"}, {ReplicasLabel: "5"}} {
-		f.labels(t, labels)
+	for _, labels := range []map[string]string{{EnabledLabel: "false", ReplicasAnnotation: "5"}, {ReplicasAnnotation: "5"}} {
+		f.metadata(t, labels)
 		f.reconcile(t)
 		f.settings(t, "rustfs", 2)
 	}
@@ -250,23 +283,23 @@ func TestInvalidFieldsAreIndependent(t *testing.T) {
 		target           string
 		replicas         int64
 	}{
-		{"empty replica", map[string]string{ReplicasLabel: ""}, "", "", "rustfs", 1},
-		{"zero replica", map[string]string{ReplicasLabel: "0"}, "", "", "rustfs", 1},
-		{"negative replica", map[string]string{ReplicasLabel: "-1"}, "", "", "rustfs", 1},
-		{"large replica", map[string]string{ReplicasLabel: "21"}, "", "", "rustfs", 1},
-		{"overflow replica", map[string]string{ReplicasLabel: "999999999999999999999999"}, "", "", "rustfs", 1},
-		{"decimal replica", map[string]string{ReplicasLabel: "2.0"}, "", "", "rustfs", 1},
-		{"signed replica", map[string]string{ReplicasLabel: "+2"}, "", "", "rustfs", 1},
-		{"whitespace replica", map[string]string{ReplicasLabel: " 2"}, "", "", "rustfs", 1},
-		{"empty target", map[string]string{BackupTargetLabel: ""}, "", "", "default", 2},
-		{"bad target", map[string]string{BackupTargetLabel: "BAD_target"}, "", "", "default", 2},
-		{"missing target", map[string]string{BackupTargetLabel: "missing"}, "", "", "default", 2},
-		{"both invalid", map[string]string{BackupTargetLabel: "missing", ReplicasLabel: "nope"}, "", "", "default", 1},
+		{"empty replica", map[string]string{ReplicasAnnotation: ""}, "", "", "rustfs", 1},
+		{"zero replica", map[string]string{ReplicasAnnotation: "0"}, "", "", "rustfs", 1},
+		{"negative replica", map[string]string{ReplicasAnnotation: "-1"}, "", "", "rustfs", 1},
+		{"large replica", map[string]string{ReplicasAnnotation: "21"}, "", "", "rustfs", 1},
+		{"overflow replica", map[string]string{ReplicasAnnotation: "999999999999999999999999"}, "", "", "rustfs", 1},
+		{"decimal replica", map[string]string{ReplicasAnnotation: "2.0"}, "", "", "rustfs", 1},
+		{"signed replica", map[string]string{ReplicasAnnotation: "+2"}, "", "", "rustfs", 1},
+		{"whitespace replica", map[string]string{ReplicasAnnotation: " 2"}, "", "", "rustfs", 1},
+		{"empty target", map[string]string{BackupTargetAnnotation: ""}, "", "", "default", 2},
+		{"bad target", map[string]string{BackupTargetAnnotation: "BAD_target"}, "", "", "default", 2},
+		{"missing target", map[string]string{BackupTargetAnnotation: "missing"}, "", "", "default", 2},
+		{"both invalid", map[string]string{BackupTargetAnnotation: "missing", ReplicasAnnotation: "nope"}, "", "", "default", 1},
 		{"strict local default", nil, "strict-local", "", "rustfs", 1},
-		{"strict local override", map[string]string{ReplicasLabel: "3"}, "strict-local", "", "rustfs", 1},
-		{"strict local valid", map[string]string{ReplicasLabel: "1"}, "strict-local", "", "rustfs", 1},
+		{"strict local override", map[string]string{ReplicasAnnotation: "3"}, "strict-local", "", "rustfs", 1},
+		{"strict local valid", map[string]string{ReplicasAnnotation: "1"}, "strict-local", "", "rustfs", 1},
 		{"sharded", nil, "disabled", "sharded", "rustfs", 1},
-		{"max replicas", map[string]string{ReplicasLabel: "20"}, "", "", "rustfs", 20},
+		{"max replicas", map[string]string{ReplicasAnnotation: "20"}, "", "", "rustfs", 20},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			f := newFixture(t)
@@ -274,7 +307,7 @@ func TestInvalidFieldsAreIndependent(t *testing.T) {
 			for k, v := range tc.labels {
 				labels[k] = v
 			}
-			f.labels(t, labels)
+			f.metadata(t, labels)
 			v := f.getVolume(t)
 			if tc.locality != "" {
 				unstructured.SetNestedField(v.Object, tc.locality, "spec", "dataLocality")
@@ -380,7 +413,7 @@ func TestConflictRechecksOptInAndPreservesConcurrentFields(t *testing.T) {
 						return err
 					}
 					if disable {
-						f.labels(t, map[string]string{EnabledLabel: "false"})
+						f.metadata(t, map[string]string{EnabledLabel: "false"})
 					}
 					return apierrors.NewConflict(schema.GroupResource{Group: "longhorn.io", Resource: "volumes"}, obj.GetName(), fmt.Errorf("injected conflict"))
 				}
@@ -456,7 +489,7 @@ func TestBackupTargetAndLegacyValidation(t *testing.T) {
 	f.c.Update(t.Context(), v)
 	f.reconcile(t)
 	f.settings(t, "rustfs", 1)
-	f.labels(t, map[string]string{EnabledLabel: "true", BackupTargetLabel: "missing"})
+	f.metadata(t, map[string]string{EnabledLabel: "true", BackupTargetAnnotation: "missing"})
 	f.reconcile(t)
 	f.settings(t, "rustfs", 1)
 	// Target creation makes the previously invalid override actionable.
@@ -483,9 +516,9 @@ func TestEventMapping(t *testing.T) {
 	if got := f.r.ClaimsForVolume(ctx, otherNamespace); len(got) != 0 {
 		t.Fatal("mapped foreign namespace")
 	}
-	// Create a PVC with the backup target label to test ClaimsForTarget field index.
+	// Create a PVC with a backup target annotation to test ClaimsForTarget field index.
 	pvcWithLabel := &corev1.PersistentVolumeClaim{
-		ObjectMeta: metav1.ObjectMeta{Name: "claim-with-label", Namespace: "app", UID: "claim-uid-2", Labels: map[string]string{EnabledLabel: "true", BackupTargetLabel: "default"}},
+		ObjectMeta: metav1.ObjectMeta{Name: "claim-with-label", Namespace: "app", UID: "claim-uid-2", Labels: map[string]string{EnabledLabel: "true"}, Annotations: map[string]string{BackupTargetAnnotation: "default"}},
 		Spec:       corev1.PersistentVolumeClaimSpec{VolumeName: "pv"},
 		Status:     corev1.PersistentVolumeClaimStatus{Phase: corev1.ClaimBound},
 	}
@@ -507,7 +540,7 @@ func TestEventMapping(t *testing.T) {
 	if got := f.r.ClaimsForTarget(ctx, target); len(got) != 0 {
 		t.Fatal("mapped disabled target")
 	}
-	f.labels(t, nil)
+	f.metadata(t, nil)
 	if got := f.r.ClaimsForPV(ctx, f.pv); len(got) != 0 {
 		t.Fatal("mapped disabled PVC")
 	}
@@ -518,15 +551,15 @@ func TestEventMapping(t *testing.T) {
 
 func TestSingleOverrides(t *testing.T) {
 	for _, tc := range []struct {
-		label, value, target string
-		replicas             int64
+		annotation, value, target string
+		replicas                  int64
 	}{
-		{BackupTargetLabel, "default", "default", 2},
-		{ReplicasLabel, "4", "rustfs", 4},
+		{BackupTargetAnnotation, "default", "default", 2},
+		{ReplicasAnnotation, "4", "rustfs", 4},
 	} {
-		t.Run(tc.label, func(t *testing.T) {
+		t.Run(tc.annotation, func(t *testing.T) {
 			f := newFixture(t)
-			f.labels(t, map[string]string{EnabledLabel: "true", tc.label: tc.value})
+			f.metadata(t, map[string]string{EnabledLabel: "true", tc.annotation: tc.value})
 			f.reconcile(t)
 			f.settings(t, tc.target, tc.replicas)
 		})
@@ -585,7 +618,7 @@ func TestConflictRechecksChangedOverrides(t *testing.T) {
 	f.r.Client = interceptor.NewClient(f.c, interceptor.Funcs{Patch: func(ctx context.Context, c client.WithWatch, obj client.Object, patch client.Patch, opts ...client.PatchOption) error {
 		if first {
 			first = false
-			f.labels(t, map[string]string{EnabledLabel: "true", BackupTargetLabel: "default", ReplicasLabel: "4"})
+			f.metadata(t, map[string]string{EnabledLabel: "true", BackupTargetAnnotation: "default", ReplicasAnnotation: "4"})
 			return apierrors.NewConflict(schema.GroupResource{Group: "longhorn.io", Resource: "volumes"}, obj.GetName(), fmt.Errorf("conflict"))
 		}
 		return c.Patch(ctx, obj, patch, opts...)

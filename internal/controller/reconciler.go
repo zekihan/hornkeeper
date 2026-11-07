@@ -47,7 +47,7 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 	// Each field has its own patch so an admission rejection cannot block the others.
 	var errs []error
 	for _, field := range volumeFields {
-		if _, exists := pvc.Labels[field.label]; field.optional() && !exists {
+		if _, exists := pvc.Annotations[field.annotation]; field.optional() && !exists {
 			continue
 		}
 		errs = append(errs, r.reconcileField(ctx, req.NamespacedName, field))
@@ -179,13 +179,13 @@ func (r *Reconciler) desired(ctx context.Context, pvc *corev1.PersistentVolumeCl
 	if !f.optional() {
 		return nil, fmt.Errorf("unknown field %q", f.name)
 	}
-	value, exists := pvc.Labels[f.label]
+	value, exists := pvc.Annotations[f.annotation]
 	if !exists {
 		return nil, errUnmanaged
 	}
 	parsed, err := f.parse(value)
 	if err != nil {
-		return nil, invalid(fmt.Errorf("%s=%q: %w", f.label, value, err))
+		return nil, invalid(fmt.Errorf("%s=%q: %w", f.annotation, value, err))
 	}
 	if f.check != nil {
 		if err := f.check(volume, parsed); err != nil {
@@ -197,11 +197,11 @@ func (r *Reconciler) desired(ctx context.Context, pvc *corev1.PersistentVolumeCl
 
 func (r *Reconciler) desiredBackupTarget(ctx context.Context, pvc *corev1.PersistentVolumeClaim) (string, error) {
 	name := r.Config.BackupTarget
-	if value, exists := pvc.Labels[BackupTargetLabel]; exists {
+	if value, exists := pvc.Annotations[BackupTargetAnnotation]; exists {
 		name = value
 	}
 	if err := config.ValidateBackupTarget(name); err != nil {
-		return "", invalid(fmt.Errorf("%s=%q: %w", BackupTargetLabel, name, err))
+		return "", invalid(fmt.Errorf("%s=%q: %w", BackupTargetAnnotation, name, err))
 	}
 	// Use a short timeout for backup target validation to avoid blocking reconciliation.
 	checkCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
@@ -217,14 +217,14 @@ func (r *Reconciler) desiredBackupTarget(ctx context.Context, pvc *corev1.Persis
 
 func (r *Reconciler) desiredReplicas(ctx context.Context, pvc *corev1.PersistentVolumeClaim, volume *unstructured.Unstructured) (int64, error) {
 	count := r.Config.Replicas
-	if value, exists := pvc.Labels[ReplicasLabel]; exists {
-		// Only decimal digits are accepted; signs and whitespace are not label values.
+	if value, exists := pvc.Annotations[ReplicasAnnotation]; exists {
+		// Only decimal digits are accepted; signs and whitespace are rejected.
 		if value == "" || strings.IndexFunc(value, func(c rune) bool { return c < '0' || c > '9' }) >= 0 {
-			return 0, invalid(fmt.Errorf("%s=%q: expected an integer from 1 to 20", ReplicasLabel, value))
+			return 0, invalid(fmt.Errorf("%s=%q: expected an integer from 1 to 20", ReplicasAnnotation, value))
 		}
 		parsed, err := strconv.Atoi(value)
 		if err != nil {
-			return 0, invalid(fmt.Errorf("%s=%q: %w", ReplicasLabel, value, err))
+			return 0, invalid(fmt.Errorf("%s=%q: %w", ReplicasAnnotation, value, err))
 		}
 		count = parsed
 	}

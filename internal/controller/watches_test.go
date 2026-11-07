@@ -21,12 +21,13 @@ func TestClaimBackupTargetIndex(t *testing.T) {
 	}{
 		{"nil labels", nil, []string{"custom-default"}},
 		{"inherited default", map[string]string{EnabledLabel: "true"}, []string{"custom-default"}},
-		{"explicit default", map[string]string{BackupTargetLabel: "custom-default"}, []string{"custom-default"}},
-		{"explicit override", map[string]string{BackupTargetLabel: "override"}, []string{"override"}},
-		{"explicit empty", map[string]string{BackupTargetLabel: ""}, nil},
+		{"explicit default", map[string]string{BackupTargetAnnotation: "custom-default"}, []string{"custom-default"}},
+		{"explicit override", map[string]string{BackupTargetAnnotation: "override"}, []string{"override"}},
+		{"explicit empty", map[string]string{BackupTargetAnnotation: ""}, nil},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			pvc := &corev1.PersistentVolumeClaim{ObjectMeta: metav1.ObjectMeta{Labels: tc.labels}}
+			labels, annotations := splitMetadata(tc.labels)
+			pvc := &corev1.PersistentVolumeClaim{ObjectMeta: metav1.ObjectMeta{Labels: labels, Annotations: annotations}}
 			if got := r.ClaimBackupTargetIndex(pvc); !reflect.DeepEqual(got, tc.want) {
 				t.Fatalf("index = %v, want %v", got, tc.want)
 			}
@@ -46,15 +47,15 @@ func TestDefaultTargetEventMapping(t *testing.T) {
 		mapped bool
 	}{
 		{"inherited default", map[string]string{EnabledLabel: "true"}, true},
-		{"explicit default", map[string]string{EnabledLabel: "true", BackupTargetLabel: "rustfs"}, true},
-		{"explicit override", map[string]string{EnabledLabel: "true", BackupTargetLabel: "default"}, false},
-		{"explicit empty", map[string]string{EnabledLabel: "true", BackupTargetLabel: ""}, false},
+		{"explicit default", map[string]string{EnabledLabel: "true", BackupTargetAnnotation: "rustfs"}, true},
+		{"explicit override", map[string]string{EnabledLabel: "true", BackupTargetAnnotation: "default"}, false},
+		{"explicit empty", map[string]string{EnabledLabel: "true", BackupTargetAnnotation: ""}, false},
 		{"disabled", map[string]string{EnabledLabel: "false"}, false},
 		{"unlabelled", nil, false},
 		{"removed override", map[string]string{EnabledLabel: "true"}, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			f.labels(t, tc.labels)
+			f.metadata(t, tc.labels)
 			got := f.r.ClaimsForTarget(t.Context(), target)
 			if tc.mapped && !reflect.DeepEqual(got, want) || !tc.mapped && len(got) != 0 {
 				t.Fatalf("target map = %v, mapped = %v", got, tc.mapped)

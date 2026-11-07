@@ -39,8 +39,8 @@ func VolumeHandleIndex(obj client.Object) []string {
 func (r *Reconciler) ClaimBackupTargetIndex(obj client.Object) []string {
 	pvc := obj.(*corev1.PersistentVolumeClaim)
 	name := r.Config.BackupTarget
-	if value, exists := pvc.Labels[BackupTargetLabel]; exists {
-		// An explicitly empty label is invalid, not an inherited default.
+	if value, exists := pvc.Annotations[BackupTargetAnnotation]; exists {
+		// An explicitly empty annotation is invalid, not an inherited default.
 		name = value
 	}
 	if name == "" {

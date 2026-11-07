@@ -154,29 +154,29 @@ func TestDisposableAPIServer(t *testing.T) {
 		t.Fatal(err)
 	}
 	waitFor(t, func() bool { return assertSettings("rustfs", 2) }, "binding event and restored handle")
-	updateLabels := func(labels map[string]string) {
+	updateMetadata := func(keys map[string]string) {
 		t.Helper()
 		if err := c.Get(ctx, client.ObjectKeyFromObject(pvc), pvc); err != nil {
 			t.Fatal(err)
 		}
-		pvc.Labels = labels
+		pvc.Labels, pvc.Annotations = splitMetadata(keys)
 		if err := c.Update(ctx, pvc); err != nil {
 			t.Fatal(err)
 		}
 	}
-	updateLabels(map[string]string{EnabledLabel: "true", BackupTargetLabel: "default", ReplicasLabel: "3"})
-	waitFor(t, func() bool { return assertSettings("default", 3) }, "override label event")
-	updateLabels(map[string]string{EnabledLabel: "true"})
+	updateMetadata(map[string]string{EnabledLabel: "true", BackupTargetAnnotation: "default", ReplicasAnnotation: "3"})
+	waitFor(t, func() bool { return assertSettings("default", 3) }, "override annotation event")
+	updateMetadata(map[string]string{EnabledLabel: "true"})
 	waitFor(t, func() bool { return assertSettings("rustfs", 2) }, "override removal event")
 	// Every optional field must pass the real Longhorn schema with the patched type.
 	optional := map[string]string{
-		EnabledLabel: "true", DataLocalityLabel: "best-effort", ReplicaAutoBalanceLabel: "least-effort",
-		ReplicaSoftAntiAffinityLabel: "enabled", ReplicaZoneSoftAntiAffinityLabel: "disabled", ReplicaDiskSoftAntiAffinityLabel: "ignored",
-		SnapshotDataIntegrityLabel: "fast-check", UnmapMarkSnapChainRemovedLabel: "enabled", OfflineRebuildingLabel: "enabled",
-		FreezeFilesystemForSnapshotLabel: "disabled", SnapshotMaxCountLabel: "100", SnapshotMaxSizeLabel: "4Gi",
-		RebuildConcurrentSyncLimitLabel: "3", ReplicaRebuildingBandwidthLimitLabel: "0", UblkQueueDepthLabel: "64", UblkNumberOfQueueLabel: "2",
+		EnabledLabel: "true", DataLocalityAnnotation: "best-effort", ReplicaAutoBalanceAnnotation: "least-effort",
+		ReplicaSoftAntiAffinityAnnotation: "enabled", ReplicaZoneSoftAntiAffinityAnnotation: "disabled", ReplicaDiskSoftAntiAffinityAnnotation: "ignored",
+		SnapshotDataIntegrityAnnotation: "fast-check", UnmapMarkSnapChainRemovedAnnotation: "enabled", OfflineRebuildingAnnotation: "enabled",
+		FreezeFilesystemForSnapshotAnnotation: "disabled", SnapshotMaxCountAnnotation: "100", SnapshotMaxSizeAnnotation: "4Gi",
+		RebuildConcurrentSyncLimitAnnotation: "3", ReplicaRebuildingBandwidthLimitAnnotation: "0", UblkQueueDepthAnnotation: "64", UblkNumberOfQueueAnnotation: "2",
 	}
-	updateLabels(optional)
+	updateMetadata(optional)
 	wantOptional := map[string]any{
 		"dataLocality": "best-effort", "replicaAutoBalance": "least-effort", "replicaSoftAntiAffinity": "enabled",
 		"replicaZoneSoftAntiAffinity": "disabled", "replicaDiskSoftAntiAffinity": "ignored", "snapshotDataIntegrity": "fast-check",
@@ -195,13 +195,13 @@ func TestDisposableAPIServer(t *testing.T) {
 			}
 		}
 		return true
-	}, "optional field labels")
+	}, "optional field annotations")
 	for field := range wantOptional {
 		if got := testutil.ToFloat64(m.Fields.WithLabelValues(field, "error")); got != 0 {
 			t.Fatalf("%s patch errors: %v", field, got)
 		}
 	}
-	updateLabels(map[string]string{EnabledLabel: "true"})
+	updateMetadata(map[string]string{EnabledLabel: "true"})
 	if err := c.Get(ctx, client.ObjectKeyFromObject(volume), volume); err != nil {
 		t.Fatal(err)
 	}
@@ -217,7 +217,7 @@ func TestDisposableAPIServer(t *testing.T) {
 		t.Fatalf("expected real resourceVersion conflict, got %v", err)
 	}
 	waitFor(t, func() bool { return assertSettings("rustfs", 2) }, "Longhorn drift event")
-	updateLabels(map[string]string{EnabledLabel: "true", BackupTargetLabel: "later", ReplicasLabel: "3"})
+	updateMetadata(map[string]string{EnabledLabel: "true", BackupTargetAnnotation: "later", ReplicasAnnotation: "3"})
 	waitFor(t, func() bool {
 		return assertSettings("rustfs", 3) && testutil.ToFloat64(m.Fields.WithLabelValues("backupTargetName", "invalid")) > 0
 	}, "independent invalid target")
@@ -238,7 +238,7 @@ func TestDisposableAPIServer(t *testing.T) {
 		t.Fatal(err)
 	}
 	invalidBefore := testutil.ToFloat64(m.Fields.WithLabelValues("backupTargetName", "invalid"))
-	updateLabels(map[string]string{EnabledLabel: "true", ReplicasLabel: "3"})
+	updateMetadata(map[string]string{EnabledLabel: "true", ReplicasAnnotation: "3"})
 	waitFor(t, func() bool {
 		return assertSettings("later", 3) && testutil.ToFloat64(m.Fields.WithLabelValues("backupTargetName", "invalid")) > invalidBefore
 	}, "missing inherited default target")
@@ -246,7 +246,7 @@ func TestDisposableAPIServer(t *testing.T) {
 		t.Fatal(err)
 	}
 	waitFor(t, func() bool { return assertSettings("rustfs", 3) }, "inherited default target recreation event")
-	updateLabels(map[string]string{EnabledLabel: "false", BackupTargetLabel: "default", ReplicasLabel: "1"})
+	updateMetadata(map[string]string{EnabledLabel: "false", BackupTargetAnnotation: "default", ReplicasAnnotation: "1"})
 	if err := c.Get(ctx, client.ObjectKeyFromObject(volume), volume); err != nil {
 		t.Fatal(err)
 	}

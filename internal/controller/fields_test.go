@@ -28,34 +28,34 @@ func (f *fixture) updateVolume(t *testing.T, mutate func(v *unstructured.Unstruc
 
 func TestOptionalFieldsLifecycle(t *testing.T) {
 	for _, tc := range []struct {
-		label, value, field string
-		want                any
+		annotation, value, field string
+		want                     any
 	}{
-		{DataLocalityLabel, "best-effort", "dataLocality", "best-effort"},
-		{ReplicaAutoBalanceLabel, "least-effort", "replicaAutoBalance", "least-effort"},
-		{ReplicaSoftAntiAffinityLabel, "enabled", "replicaSoftAntiAffinity", "enabled"},
-		{ReplicaZoneSoftAntiAffinityLabel, "disabled", "replicaZoneSoftAntiAffinity", "disabled"},
-		{ReplicaDiskSoftAntiAffinityLabel, "ignored", "replicaDiskSoftAntiAffinity", "ignored"},
-		{SnapshotDataIntegrityLabel, "fast-check", "snapshotDataIntegrity", "fast-check"},
-		{UnmapMarkSnapChainRemovedLabel, "enabled", "unmapMarkSnapChainRemoved", "enabled"},
-		{OfflineRebuildingLabel, "enabled", "offlineRebuilding", "enabled"},
-		{FreezeFilesystemForSnapshotLabel, "disabled", "freezeFilesystemForSnapshot", "disabled"},
-		{SnapshotMaxCountLabel, "250", "snapshotMaxCount", int64(250)},
-		{SnapshotMaxSizeLabel, "2Gi", "snapshotMaxSize", "2147483648"},
-		{SnapshotMaxSizeLabel, "0", "snapshotMaxSize", "0"},
-		{RebuildConcurrentSyncLimitLabel, "5", "rebuildConcurrentSyncLimit", int64(5)},
-		{ReplicaRebuildingBandwidthLimitLabel, "0", "replicaRebuildingBandwidthLimit", int64(0)},
-		{UblkQueueDepthLabel, "128", "ublkQueueDepth", int64(128)},
-		{UblkNumberOfQueueLabel, "4", "ublkNumberOfQueue", int64(4)},
+		{DataLocalityAnnotation, "best-effort", "dataLocality", "best-effort"},
+		{ReplicaAutoBalanceAnnotation, "least-effort", "replicaAutoBalance", "least-effort"},
+		{ReplicaSoftAntiAffinityAnnotation, "enabled", "replicaSoftAntiAffinity", "enabled"},
+		{ReplicaZoneSoftAntiAffinityAnnotation, "disabled", "replicaZoneSoftAntiAffinity", "disabled"},
+		{ReplicaDiskSoftAntiAffinityAnnotation, "ignored", "replicaDiskSoftAntiAffinity", "ignored"},
+		{SnapshotDataIntegrityAnnotation, "fast-check", "snapshotDataIntegrity", "fast-check"},
+		{UnmapMarkSnapChainRemovedAnnotation, "enabled", "unmapMarkSnapChainRemoved", "enabled"},
+		{OfflineRebuildingAnnotation, "enabled", "offlineRebuilding", "enabled"},
+		{FreezeFilesystemForSnapshotAnnotation, "disabled", "freezeFilesystemForSnapshot", "disabled"},
+		{SnapshotMaxCountAnnotation, "250", "snapshotMaxCount", int64(250)},
+		{SnapshotMaxSizeAnnotation, "2Gi", "snapshotMaxSize", "2147483648"},
+		{SnapshotMaxSizeAnnotation, "0", "snapshotMaxSize", "0"},
+		{RebuildConcurrentSyncLimitAnnotation, "5", "rebuildConcurrentSyncLimit", int64(5)},
+		{ReplicaRebuildingBandwidthLimitAnnotation, "0", "replicaRebuildingBandwidthLimit", int64(0)},
+		{UblkQueueDepthAnnotation, "128", "ublkQueueDepth", int64(128)},
+		{UblkNumberOfQueueAnnotation, "4", "ublkNumberOfQueue", int64(4)},
 	} {
-		t.Run(tc.label+"="+tc.value, func(t *testing.T) {
+		t.Run(tc.annotation+"="+tc.value, func(t *testing.T) {
 			f := newFixture(t)
 			f.reconcile(t)
 			if got := f.specField(t, tc.field); got != nil && tc.field != "dataLocality" {
-				t.Fatalf("unlabelled optional field was set: %v", got)
+				t.Fatalf("unannotated optional field was set: %v", got)
 			}
 			before := f.patches
-			f.labels(t, map[string]string{EnabledLabel: "true", tc.label: tc.value})
+			f.metadata(t, map[string]string{EnabledLabel: "true", tc.annotation: tc.value})
 			f.reconcile(t)
 			if got := f.specField(t, tc.field); !reflect.DeepEqual(got, tc.want) {
 				t.Fatalf("got %s=%#v, want %#v", tc.field, got, tc.want)
@@ -70,14 +70,14 @@ func TestOptionalFieldsLifecycle(t *testing.T) {
 			if f.patches != before+1 {
 				t.Fatal("no-op reconcile wrote a patch")
 			}
-			// Removing an optional label stops enforcement and keeps the value.
-			f.labels(t, map[string]string{EnabledLabel: "true"})
+			// Removing an optional annotation stops enforcement and keeps the value.
+			f.metadata(t, map[string]string{EnabledLabel: "true"})
 			f.updateVolume(t, func(v *unstructured.Unstructured) {
 				unstructured.SetNestedField(v.Object, "manual", "spec", tc.field)
 			})
 			f.reconcile(t)
 			if got := f.specField(t, tc.field); got != "manual" {
-				t.Fatalf("unlabelled field was enforced: %v", got)
+				t.Fatalf("unannotated field was enforced: %v", got)
 			}
 		})
 	}
@@ -85,7 +85,7 @@ func TestOptionalFieldsLifecycle(t *testing.T) {
 
 func TestOptionalFieldsDriftAndDisable(t *testing.T) {
 	f := newFixture(t)
-	f.labels(t, map[string]string{EnabledLabel: "true", SnapshotMaxCountLabel: "100", ReplicaAutoBalanceLabel: "best-effort"})
+	f.metadata(t, map[string]string{EnabledLabel: "true", SnapshotMaxCountAnnotation: "100", ReplicaAutoBalanceAnnotation: "best-effort"})
 	f.reconcile(t)
 	f.updateVolume(t, func(v *unstructured.Unstructured) {
 		unstructured.SetNestedField(v.Object, int64(10), "spec", "snapshotMaxCount")
@@ -95,7 +95,7 @@ func TestOptionalFieldsDriftAndDisable(t *testing.T) {
 	if f.specField(t, "snapshotMaxCount") != int64(100) || f.specField(t, "replicaAutoBalance") != "best-effort" {
 		t.Fatal("drift was not corrected")
 	}
-	f.labels(t, map[string]string{EnabledLabel: "false", SnapshotMaxCountLabel: "50"})
+	f.metadata(t, map[string]string{EnabledLabel: "false", SnapshotMaxCountAnnotation: "50"})
 	f.reconcile(t)
 	if f.specField(t, "snapshotMaxCount") != int64(100) {
 		t.Fatal("disabled claim was enforced")
@@ -104,41 +104,41 @@ func TestOptionalFieldsDriftAndDisable(t *testing.T) {
 
 func TestOptionalFieldsInvalid(t *testing.T) {
 	for _, tc := range []struct {
-		name, label, value, field string
-		mutate                    func(v *unstructured.Unstructured)
+		name, annotation, value, field string
+		mutate                         func(v *unstructured.Unstructured)
 	}{
-		{"empty enum", ReplicaAutoBalanceLabel, "", "replicaAutoBalance", nil},
-		{"unknown enum", ReplicaAutoBalanceLabel, "Best-Effort", "replicaAutoBalance", nil},
-		{"enum outside field", ReplicaSoftAntiAffinityLabel, "best-effort", "replicaSoftAntiAffinity", nil},
-		{"integrity mode outside other fields", OfflineRebuildingLabel, "fast-check", "offlineRebuilding", nil},
-		{"low snapshot count", SnapshotMaxCountLabel, "1", "snapshotMaxCount", nil},
-		{"high snapshot count", SnapshotMaxCountLabel, "251", "snapshotMaxCount", nil},
-		{"signed snapshot count", SnapshotMaxCountLabel, "+5", "snapshotMaxCount", nil},
-		{"empty snapshot count", SnapshotMaxCountLabel, "", "snapshotMaxCount", nil},
-		{"high sync limit", RebuildConcurrentSyncLimitLabel, "6", "rebuildConcurrentSyncLimit", nil},
-		{"overflow bandwidth", ReplicaRebuildingBandwidthLimitLabel, "99999999999999999999", "replicaRebuildingBandwidthLimit", nil},
-		{"small ublk depth", UblkQueueDepthLabel, "16", "ublkQueueDepth", nil},
-		{"large ublk queues", UblkNumberOfQueueLabel, "2147483648", "ublkNumberOfQueue", nil},
-		{"bad size", SnapshotMaxSizeLabel, "lots", "snapshotMaxSize", nil},
-		{"negative size", SnapshotMaxSizeLabel, "-1Gi", "snapshotMaxSize", nil},
-		{"fractional size", SnapshotMaxSizeLabel, "1m", "snapshotMaxSize", nil},
-		{"size below twice volume", SnapshotMaxSizeLabel, "2047Mi", "snapshotMaxSize", nil},
-		{"bandwidth on v1", ReplicaRebuildingBandwidthLimitLabel, "100", "replicaRebuildingBandwidthLimit", nil},
-		{"unmap on v2", UnmapMarkSnapChainRemovedLabel, "enabled", "unmapMarkSnapChainRemoved", func(v *unstructured.Unstructured) {
+		{"empty enum", ReplicaAutoBalanceAnnotation, "", "replicaAutoBalance", nil},
+		{"unknown enum", ReplicaAutoBalanceAnnotation, "Best-Effort", "replicaAutoBalance", nil},
+		{"enum outside field", ReplicaSoftAntiAffinityAnnotation, "best-effort", "replicaSoftAntiAffinity", nil},
+		{"integrity mode outside other fields", OfflineRebuildingAnnotation, "fast-check", "offlineRebuilding", nil},
+		{"low snapshot count", SnapshotMaxCountAnnotation, "1", "snapshotMaxCount", nil},
+		{"high snapshot count", SnapshotMaxCountAnnotation, "251", "snapshotMaxCount", nil},
+		{"signed snapshot count", SnapshotMaxCountAnnotation, "+5", "snapshotMaxCount", nil},
+		{"empty snapshot count", SnapshotMaxCountAnnotation, "", "snapshotMaxCount", nil},
+		{"high sync limit", RebuildConcurrentSyncLimitAnnotation, "6", "rebuildConcurrentSyncLimit", nil},
+		{"overflow bandwidth", ReplicaRebuildingBandwidthLimitAnnotation, "99999999999999999999", "replicaRebuildingBandwidthLimit", nil},
+		{"small ublk depth", UblkQueueDepthAnnotation, "16", "ublkQueueDepth", nil},
+		{"large ublk queues", UblkNumberOfQueueAnnotation, "2147483648", "ublkNumberOfQueue", nil},
+		{"bad size", SnapshotMaxSizeAnnotation, "lots", "snapshotMaxSize", nil},
+		{"negative size", SnapshotMaxSizeAnnotation, "-1Gi", "snapshotMaxSize", nil},
+		{"fractional size", SnapshotMaxSizeAnnotation, "1m", "snapshotMaxSize", nil},
+		{"size below twice volume", SnapshotMaxSizeAnnotation, "2047Mi", "snapshotMaxSize", nil},
+		{"bandwidth on v1", ReplicaRebuildingBandwidthLimitAnnotation, "100", "replicaRebuildingBandwidthLimit", nil},
+		{"unmap on v2", UnmapMarkSnapChainRemovedAnnotation, "enabled", "unmapMarkSnapChainRemoved", func(v *unstructured.Unstructured) {
 			unstructured.SetNestedField(v.Object, "v2", "spec", "dataEngine")
 		}},
-		{"zone pinned", ReplicaZoneSoftAntiAffinityLabel, "disabled", "replicaZoneSoftAntiAffinity", func(v *unstructured.Unstructured) {
+		{"zone pinned", ReplicaZoneSoftAntiAffinityAnnotation, "disabled", "replicaZoneSoftAntiAffinity", func(v *unstructured.Unstructured) {
 			unstructured.SetNestedSlice(v.Object, []any{map[string]any{"zone": "a"}, map[string]any{"zone": "a", "region": "r"}}, "spec", "topologyRequirement")
 		}},
-		{"strict local attached", DataLocalityLabel, "strict-local", "dataLocality", nil},
-		{"strict local replicas", DataLocalityLabel, "strict-local", "dataLocality", func(v *unstructured.Unstructured) {
+		{"strict local attached", DataLocalityAnnotation, "strict-local", "dataLocality", nil},
+		{"strict local replicas", DataLocalityAnnotation, "strict-local", "dataLocality", func(v *unstructured.Unstructured) {
 			unstructured.SetNestedField(v.Object, "detached", "status", "state")
 			unstructured.SetNestedField(v.Object, int64(3), "spec", "numberOfReplicas")
 		}},
-		{"leave strict local attached", DataLocalityLabel, "best-effort", "dataLocality", func(v *unstructured.Unstructured) {
+		{"leave strict local attached", DataLocalityAnnotation, "best-effort", "dataLocality", func(v *unstructured.Unstructured) {
 			unstructured.SetNestedField(v.Object, "strict-local", "spec", "dataLocality")
 		}},
-		{"sharded locality", DataLocalityLabel, "best-effort", "dataLocality", func(v *unstructured.Unstructured) {
+		{"sharded locality", DataLocalityAnnotation, "best-effort", "dataLocality", func(v *unstructured.Unstructured) {
 			unstructured.SetNestedField(v.Object, "sharded", "spec", "dataLayout", "type")
 		}},
 	} {
@@ -148,7 +148,7 @@ func TestOptionalFieldsInvalid(t *testing.T) {
 				f.updateVolume(t, tc.mutate)
 			}
 			before := f.specField(t, tc.field)
-			f.labels(t, map[string]string{EnabledLabel: "true", tc.label: tc.value})
+			f.metadata(t, map[string]string{EnabledLabel: "true", tc.annotation: tc.value})
 			f.reconcile(t)
 			if got := f.specField(t, tc.field); !reflect.DeepEqual(got, before) {
 				t.Fatalf("invalid value changed %s to %#v", tc.field, got)
@@ -166,37 +166,37 @@ func TestOptionalFieldsInvalid(t *testing.T) {
 
 func TestOptionalFieldsAccepted(t *testing.T) {
 	for _, tc := range []struct {
-		name, label, value, field string
-		want                      any
-		mutate                    func(v *unstructured.Unstructured)
+		name, annotation, value, field string
+		want                           any
+		mutate                         func(v *unstructured.Unstructured)
 	}{
-		{"bandwidth on v2", ReplicaRebuildingBandwidthLimitLabel, "100", "replicaRebuildingBandwidthLimit", int64(100), func(v *unstructured.Unstructured) {
+		{"bandwidth on v2", ReplicaRebuildingBandwidthLimitAnnotation, "100", "replicaRebuildingBandwidthLimit", int64(100), func(v *unstructured.Unstructured) {
 			unstructured.SetNestedField(v.Object, "v2", "spec", "dataEngine")
 		}},
-		{"unmap disabled on v2", UnmapMarkSnapChainRemovedLabel, "disabled", "unmapMarkSnapChainRemoved", "disabled", func(v *unstructured.Unstructured) {
+		{"unmap disabled on v2", UnmapMarkSnapChainRemovedAnnotation, "disabled", "unmapMarkSnapChainRemoved", "disabled", func(v *unstructured.Unstructured) {
 			unstructured.SetNestedField(v.Object, "v2", "spec", "dataEngine")
 		}},
-		{"zone pinned enabled", ReplicaZoneSoftAntiAffinityLabel, "enabled", "replicaZoneSoftAntiAffinity", "enabled", func(v *unstructured.Unstructured) {
+		{"zone pinned enabled", ReplicaZoneSoftAntiAffinityAnnotation, "enabled", "replicaZoneSoftAntiAffinity", "enabled", func(v *unstructured.Unstructured) {
 			unstructured.SetNestedSlice(v.Object, []any{map[string]any{"zone": "a"}}, "spec", "topologyRequirement")
 		}},
-		{"multiple zones", ReplicaZoneSoftAntiAffinityLabel, "disabled", "replicaZoneSoftAntiAffinity", "disabled", func(v *unstructured.Unstructured) {
+		{"multiple zones", ReplicaZoneSoftAntiAffinityAnnotation, "disabled", "replicaZoneSoftAntiAffinity", "disabled", func(v *unstructured.Unstructured) {
 			unstructured.SetNestedSlice(v.Object, []any{map[string]any{"zone": "a"}, map[string]any{"zone": "b"}}, "spec", "topologyRequirement")
 		}},
-		{"region only", ReplicaZoneSoftAntiAffinityLabel, "disabled", "replicaZoneSoftAntiAffinity", "disabled", func(v *unstructured.Unstructured) {
+		{"region only", ReplicaZoneSoftAntiAffinityAnnotation, "disabled", "replicaZoneSoftAntiAffinity", "disabled", func(v *unstructured.Unstructured) {
 			unstructured.SetNestedSlice(v.Object, []any{map[string]any{"region": "r"}}, "spec", "topologyRequirement")
 		}},
-		{"strict local detached", DataLocalityLabel, "strict-local", "dataLocality", "strict-local", func(v *unstructured.Unstructured) {
+		{"strict local detached", DataLocalityAnnotation, "strict-local", "dataLocality", "strict-local", func(v *unstructured.Unstructured) {
 			unstructured.SetNestedField(v.Object, "detached", "status", "state")
 		}},
-		{"size exactly twice volume", SnapshotMaxSizeLabel, "2Gi", "snapshotMaxSize", "2147483648", nil},
-		{"zero ublk depth", UblkQueueDepthLabel, "0", "ublkQueueDepth", int64(0), nil},
+		{"size exactly twice volume", SnapshotMaxSizeAnnotation, "2Gi", "snapshotMaxSize", "2147483648", nil},
+		{"zero ublk depth", UblkQueueDepthAnnotation, "0", "ublkQueueDepth", int64(0), nil},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			f := newFixture(t)
 			if tc.mutate != nil {
 				f.updateVolume(t, tc.mutate)
 			}
-			f.labels(t, map[string]string{EnabledLabel: "true", ReplicasLabel: "1", tc.label: tc.value})
+			f.metadata(t, map[string]string{EnabledLabel: "true", ReplicasAnnotation: "1", tc.annotation: tc.value})
 			f.reconcile(t)
 			if got := f.specField(t, tc.field); !reflect.DeepEqual(got, tc.want) {
 				t.Fatalf("got %s=%#v, want %#v", tc.field, got, tc.want)
@@ -211,7 +211,7 @@ func TestLeavingStrictLocalRaisesReplicasInOnePass(t *testing.T) {
 		unstructured.SetNestedField(v.Object, "strict-local", "spec", "dataLocality")
 		unstructured.SetNestedField(v.Object, "detached", "status", "state")
 	})
-	f.labels(t, map[string]string{EnabledLabel: "true", DataLocalityLabel: "best-effort", ReplicasLabel: "3"})
+	f.metadata(t, map[string]string{EnabledLabel: "true", DataLocalityAnnotation: "best-effort", ReplicasAnnotation: "3"})
 	f.reconcile(t)
 	if got := f.specField(t, "dataLocality"); got != "best-effort" {
 		t.Fatalf("dataLocality = %v", got)
@@ -222,7 +222,7 @@ func TestLeavingStrictLocalRaisesReplicasInOnePass(t *testing.T) {
 func TestOptionalFieldsDryRun(t *testing.T) {
 	f := newFixture(t)
 	f.r.Config.DryRun = true
-	f.labels(t, map[string]string{EnabledLabel: "true", SnapshotMaxCountLabel: "10"})
+	f.metadata(t, map[string]string{EnabledLabel: "true", SnapshotMaxCountAnnotation: "10"})
 	f.reconcile(t)
 	if f.patches != 0 || f.specField(t, "snapshotMaxCount") != nil {
 		t.Fatal("dry run changed the volume")
@@ -232,12 +232,12 @@ func TestOptionalFieldsDryRun(t *testing.T) {
 	}
 }
 
-func TestVolumeFieldLabelsAreUnique(t *testing.T) {
+func TestVolumeFieldAnnotationsAreUnique(t *testing.T) {
 	seen := map[string]bool{}
 	for _, f := range volumeFields {
-		if seen[f.label] || seen[f.name] {
-			t.Fatalf("duplicate field or label: %s %s", f.name, f.label)
+		if seen[f.annotation] || seen[f.name] {
+			t.Fatalf("duplicate field or annotation: %s %s", f.name, f.annotation)
 		}
-		seen[f.label], seen[f.name] = true, true
+		seen[f.annotation], seen[f.name] = true, true
 	}
 }
