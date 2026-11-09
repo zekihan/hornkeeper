@@ -4,6 +4,7 @@ package controller
 
 import (
 	"context"
+	"errors"
 	"io"
 	"os"
 	"testing"
@@ -239,7 +240,7 @@ func applyExample(t *testing.T, c client.Client, path string) {
 	decoder := yaml.NewYAMLOrJSONDecoder(file, 4096)
 	for {
 		obj := &unstructured.Unstructured{}
-		if err := decoder.Decode(&obj.Object); err == io.EOF {
+		if err := decoder.Decode(&obj.Object); errors.Is(err, io.EOF) {
 			return
 		} else if err != nil {
 			t.Fatal(err)

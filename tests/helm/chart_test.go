@@ -2,6 +2,7 @@ package helm_test
 
 import (
 	"bytes"
+	"errors"
 	"io"
 	"os"
 	"os/exec"
@@ -68,7 +69,7 @@ func TestRenderedChartDecodesKubernetesStrings(t *testing.T) {
 			count := 0
 			for {
 				var raw runtime.RawExtension
-				if err := docs.Decode(&raw); err == io.EOF {
+				if err := docs.Decode(&raw); errors.Is(err, io.EOF) {
 					break
 				} else if err != nil {
 					t.Fatal(err)
