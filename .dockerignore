@@ -6,3 +6,11 @@ tmp
 docs
 *.md
 internal/controller/testdata
+.env
+.env.*
+charts
+deploy
+examples
+scripts
+tests
+VERSION
