@@ -13,7 +13,6 @@ import (
 	"github.com/go-logr/logr"
 	"github.com/zekihan/hornkeeper/internal/config"
 	corev1 "k8s.io/api/core/v1"
-	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/client-go/util/retry"
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -98,7 +97,10 @@ func (r *Reconciler) resolveBinding(ctx context.Context, key client.ObjectKey) (
 func (r *Reconciler) readVolume(ctx context.Context, handle string) (*unstructured.Unstructured, error) {
 	volume := Resource(VolumeGVK)
 	if err := r.Reader.Get(ctx, client.ObjectKey{Namespace: r.Config.LonghornNamespace, Name: handle}, volume); err != nil {
-		return nil, client.IgnoreNotFound(err)
+		if isLonghornObjectNotFound(err, "volumes", handle) {
+			return nil, nil
+		}
+		return nil, err
 	}
 	if !volume.GetDeletionTimestamp().IsZero() {
 		return nil, nil
@@ -236,7 +238,7 @@ func (r *Reconciler) desiredBackupTarget(ctx context.Context, pvc *corev1.Persis
 	checkCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 	if err := CheckBackupTarget(checkCtx, r.Reader, r.Config.LonghornNamespace, name); err != nil {
-		if apierrors.IsNotFound(err) || isInvalid(err) {
+		if isInvalid(err) || isLonghornObjectNotFound(err, "backuptargets", name) {
 			return "", invalid(err)
 		}
 		return "", err

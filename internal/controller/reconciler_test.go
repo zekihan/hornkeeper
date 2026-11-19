@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net/http"
 	"reflect"
 	"slices"
 	"strings"
@@ -516,6 +517,58 @@ func TestRetryExhaustion(t *testing.T) {
 		t.Fatalf("expected retries, got %d", attempts)
 	}
 	f.settings(t, "default", 1)
+}
+
+func TestLonghornNotFoundClassification(t *testing.T) {
+	for _, lookup := range []struct {
+		gvk           schema.GroupVersionKind
+		resource      string
+		objectName    string
+		field         string
+		missingResult string
+		wantReplicas  int64
+	}{
+		{BackupTargetGVK, "backuptargets", "rustfs", "backupTargetName", "invalid", 2},
+		{VolumeGVK, "volumes", "restored-volume", "numberOfReplicas", "waiting", 1},
+	} {
+		resource := schema.GroupResource{Group: lookup.gvk.Group, Resource: lookup.resource}
+		for _, tc := range []struct {
+			name       string
+			readErr    error
+			wantResult string
+		}{
+			{"missing object", apierrors.NewNotFound(resource, lookup.objectName), lookup.missingResult},
+			{"unserved API", apierrors.NewGenericServerResponse(http.StatusNotFound, http.MethodGet, schema.GroupResource{}, "", "", 0, false), "error"},
+			{"unexpected HTTP 404", apierrors.NewGenericServerResponse(http.StatusNotFound, http.MethodGet, resource, lookup.objectName, "Not Found", 0, true), "error"},
+		} {
+			t.Run(lookup.gvk.Kind+"/"+tc.name, func(t *testing.T) {
+				f := newFixture(t)
+				f.r.Reader = interceptor.NewClient(f.c, interceptor.Funcs{Get: func(ctx context.Context, c client.WithWatch, key client.ObjectKey, obj client.Object, opts ...client.GetOption) error {
+					if obj.GetObjectKind().GroupVersionKind() == lookup.gvk && key.Name == lookup.objectName {
+						return tc.readErr
+					}
+					return c.Get(ctx, key, obj, opts...)
+				}})
+				result, err := f.r.Reconcile(t.Context(), ctrl.Request{NamespacedName: client.ObjectKeyFromObject(f.pvc)})
+				reconcileResult := "enabled"
+				if tc.wantResult == "error" {
+					reconcileResult = "error"
+					if !errors.Is(err, tc.readErr) || result != (ctrl.Result{}) {
+						t.Errorf("expected API error and queue backoff, got result=%v err=%v", result, err)
+					}
+				} else if err != nil || result.RequeueAfter != f.r.Config.ResyncInterval {
+					t.Errorf("expected periodic retry, got result=%v err=%v", result, err)
+				}
+				if got := testutil.ToFloat64(f.r.Metrics.Reconciles.WithLabelValues(reconcileResult)); got != 1 {
+					t.Errorf("reconciliations with result %q = %v, want 1", reconcileResult, got)
+				}
+				if got := testutil.ToFloat64(f.r.Metrics.Fields.WithLabelValues(lookup.field, tc.wantResult)); got != 1 {
+					t.Errorf("%s reconciliations with result %q = %v, want 1", lookup.field, tc.wantResult, got)
+				}
+				f.settings(t, "default", lookup.wantReplicas)
+			})
+		}
+	}
 }
 
 func TestBackupTargetAndLegacyValidation(t *testing.T) {
