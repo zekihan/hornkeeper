@@ -385,6 +385,48 @@ func TestBindingAndVolumeResolution(t *testing.T) {
 	}
 }
 
+func TestBackupTargetPatchRechecksPVBinding(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		change func(context.Context, client.Client, *corev1.PersistentVolume) error
+	}{
+		{"rebound", func(ctx context.Context, c client.Client, pv *corev1.PersistentVolume) error {
+			pv.Spec.ClaimRef = &corev1.ObjectReference{Namespace: "app", Name: "new-claim", UID: "new-uid"}
+			return c.Update(ctx, pv)
+		}},
+		{"deleted", func(ctx context.Context, c client.Client, pv *corev1.PersistentVolume) error {
+			return c.Delete(ctx, pv)
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newFixture(t)
+			changed := false
+			f.r.Reader = interceptor.NewClient(f.c, interceptor.Funcs{Get: func(ctx context.Context, c client.WithWatch, key client.ObjectKey, obj client.Object, opts ...client.GetOption) error {
+				if err := c.Get(ctx, key, obj, opts...); err != nil {
+					return err
+				}
+				if changed || obj.GetObjectKind().GroupVersionKind() != BackupTargetGVK {
+					return nil
+				}
+				pv := &corev1.PersistentVolume{}
+				if err := c.Get(ctx, client.ObjectKeyFromObject(f.pv), pv); err != nil {
+					return err
+				}
+				changed = true
+				return tc.change(ctx, c, pv)
+			}})
+			f.reconcile(t)
+			if !changed {
+				t.Fatal("backup target lookup did not change the PV")
+			}
+			f.settings(t, "default", 1)
+			if f.patches != 0 {
+				t.Fatalf("patched the volume after the binding changed: %d patches", f.patches)
+			}
+		})
+	}
+}
+
 func TestPendingClaimLaterBinds(t *testing.T) {
 	f := newFixture(t)
 	pvc := &corev1.PersistentVolumeClaim{}
