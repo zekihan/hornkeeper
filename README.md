@@ -80,11 +80,12 @@ Removing the annotation stops enforcement and keeps the current volume value.
 | `ublk-queue-depth` | `ublkQueueDepth` | 0 or an integer of at least 32 |
 | `ublk-number-of-queue` | `ublkNumberOfQueue` | Non-negative integer; 0 means unspecified |
 
-Hornkeeper checks the same constraints as Longhorn's admission webhook before
-patching and leaves the field unchanged when they fail:
+Hornkeeper validates volume settings before patching and leaves the affected
+field unchanged when a check fails.
 
-- `strict-local` requires 1 replica, and converting to or from `strict-local`
-  requires a detached volume. Sharded volumes require `disabled`.
+- `strict-local` requires 1 replica and is incompatible with non-migratable RWX
+  volumes. Converting to or from `strict-local` requires a detached volume.
+  Sharded volumes require `disabled`.
 - `snapshot-max-size` must be `0` or at least twice the volume size.
 - `unmap-mark-snap-chain-removed` must be `disabled` for data engine v2.
 - `replica-rebuilding-bandwidth-limit` other than `0` requires data engine v2.
@@ -92,9 +93,11 @@ patching and leaves the field unchanged when they fail:
 
 Longhorn also rejects lowering `snapshot-max-count` or `snapshot-max-size` below
 current snapshot usage, or changing them during migration; those rejections are
-retried like any other admission failure. When switching to `strict-local` and to 1
-replica, the replica count changes first. Locality changes on a subsequent
-reconciliation once the volume is detached.
+retried like any other admission failure. A valid replica override or controller
+default above 1 prevents entering `strict-local`, even if the volume currently has
+one replica. When switching to `strict-local` and to 1 replica, the replica count
+changes first. Locality changes on a subsequent reconciliation once the volume
+is detached.
 
 Settings Longhorn fixes at creation or owns operationally are deliberately not
 exposed: access mode, size, data engine, frontend, encryption, backing image,

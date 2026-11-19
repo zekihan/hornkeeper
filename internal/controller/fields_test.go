@@ -245,6 +245,76 @@ func TestUblkZeroMatchesAbsentFields(t *testing.T) {
 	}
 }
 
+func TestStrictLocalConflictsWithDesiredReplicas(t *testing.T) {
+	for _, tc := range []struct {
+		name         string
+		override     *string
+		legacyClone  bool
+		wantLocality string
+		wantReplicas int64
+	}{
+		{"inherited replica count", nil, false, "disabled", 2},
+		{"explicit replica count", new("3"), false, "disabled", 3},
+		{"one replica", new("1"), false, "strict-local", 1},
+		{"invalid replica override", new("bad"), false, "strict-local", 1},
+		{"legacy linked clone", nil, true, "strict-local", 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newFixture(t)
+			f.updateVolume(t, func(v *unstructured.Unstructured) {
+				unstructured.SetNestedField(v.Object, "detached", "status", "state")
+				if tc.legacyClone {
+					v.SetLabels(map[string]string{legacyLinkedCloneLabel: "true"})
+				}
+			})
+			metadata := map[string]string{EnabledLabel: "true", DataLocalityAnnotation: "strict-local"}
+			if tc.override != nil {
+				metadata[ReplicasAnnotation] = *tc.override
+			}
+			f.metadata(t, metadata)
+			f.reconcile(t)
+			if got := f.specField(t, "dataLocality"); got != tc.wantLocality {
+				t.Errorf("dataLocality = %v, want %s", got, tc.wantLocality)
+			}
+			f.settings(t, "rustfs", tc.wantReplicas)
+		})
+	}
+}
+
+func TestDataLocalityAndAccessMode(t *testing.T) {
+	for _, tc := range []struct {
+		name, locality, want string
+		migratable           *bool
+	}{
+		{"non-migratable RWX", "strict-local", "disabled", new(false)},
+		{"implicit non-migratable RWX", "strict-local", "disabled", nil},
+		{"migratable RWX", "strict-local", "strict-local", new(true)},
+		{"best-effort RWX", "best-effort", "best-effort", new(false)},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newFixture(t)
+			f.updateVolume(t, func(v *unstructured.Unstructured) {
+				unstructured.SetNestedField(v.Object, "detached", "status", "state")
+				unstructured.SetNestedField(v.Object, "rwx", "spec", "accessMode")
+				if tc.migratable != nil {
+					unstructured.SetNestedField(v.Object, *tc.migratable, "spec", "migratable")
+				}
+			})
+			f.metadata(t, map[string]string{EnabledLabel: "true", DataLocalityAnnotation: tc.locality, ReplicasAnnotation: "1"})
+			f.reconcile(t)
+			if got := f.specField(t, "dataLocality"); got != tc.want {
+				t.Errorf("dataLocality = %v, want %s", got, tc.want)
+			}
+			if tc.locality != tc.want {
+				if got := testutil.ToFloat64(f.r.Metrics.Fields.WithLabelValues("dataLocality", "invalid")); got != 1 {
+					t.Errorf("invalid dataLocality metric = %v, want 1", got)
+				}
+			}
+			f.settings(t, "rustfs", 1)
+		})
+	}
+}
+
 func TestLeavingStrictLocalRaisesReplicasInOnePass(t *testing.T) {
 	f := newFixture(t)
 	f.updateVolume(t, func(v *unstructured.Unstructured) {

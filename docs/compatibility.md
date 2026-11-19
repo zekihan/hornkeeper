@@ -11,6 +11,7 @@ webhook for validation of the complete volume.
 | Served API schemas, including backup targets | [crds.yaml](https://github.com/longhorn/longhorn-manager/blob/20d9c0790312b45aafd5668674e73dbf2eba1832/k8s/crds.yaml) |
 | Replica bounds 1–20 | [setting.go](https://github.com/longhorn/longhorn-manager/blob/20d9c0790312b45aafd5668674e73dbf2eba1832/types/setting.go), `SettingDefinitionDefaultReplicaCount` |
 | Strict-local requires 1 | [types.go](https://github.com/longhorn/longhorn-manager/blob/20d9c0790312b45aafd5668674e73dbf2eba1832/types/types.go), `ValidateDataLocalityAndReplicaCount` |
+| Strict-local is incompatible with non-migratable RWX | [types.go](https://github.com/longhorn/longhorn-manager/blob/20d9c0790312b45aafd5668674e73dbf2eba1832/types/types.go), `ValidateDataLocalityAndAccessMode` |
 | Updates, target existence, sharded and clone restrictions | [validator.go](https://github.com/longhorn/longhorn-manager/blob/20d9c0790312b45aafd5668674e73dbf2eba1832/webhook/resources/volume/validator.go), `Update`, `validateReplicaCount`, `validateShardedConstraints`, `validateBackupTarget` |
 | Optional field values and constraints: data locality transitions, ublk depth, snapshot limits, zone pinning | [validator.go](https://github.com/longhorn/longhorn-manager/blob/20d9c0790312b45aafd5668674e73dbf2eba1832/webhook/resources/volume/validator.go), `validateDataLocalityUpdate`, `validateUblkQueueDepth`, `validateSnapshotMaxCount`, `validateSnapshotMaxSize`, `validateTopologyZonePin` |
 | Enum values and data-engine restrictions for optional fields | [types.go](https://github.com/longhorn/longhorn-manager/blob/20d9c0790312b45aafd5668674e73dbf2eba1832/types/types.go), `ValidateReplicaAutoBalance`, `ValidateUnmapMarkSnapChainRemoved`, `ValidateReplicaRebuildingBandwidthLimit` and siblings |
@@ -23,9 +24,11 @@ webhook for validation of the complete volume.
 Hornkeeper validates startup defaults and annotation syntax, target existence and
 non-deletion, the replica range, strict-local/sharded replica counts and the legacy
 linked-clone replica immutability marker. For optional fields it validates enum
-values and integer ranges, strict-local replica and detachment requirements,
-sharded locality, data-engine restrictions, ublk queue depth, the snapshot size
-floor and zone-pinned anti-affinity. It leaves the invalid field unchanged.
+values and integer ranges, strict-local replica, detachment and access mode
+requirements, sharded locality, data-engine restrictions, ublk queue depth,
+the snapshot size floor and zone-pinned anti-affinity. It leaves the invalid
+field unchanged. Longhorn's creation validator checks strict-local access mode
+compatibility. Hornkeeper applies the same check to locality updates.
 
 Optional fields are those with a Longhorn REST `Update*` action, except access
 mode (Kubernetes PV access modes are immutable, so changing Longhorn's would

@@ -195,6 +195,16 @@ func (r *Reconciler) desired(ctx context.Context, pvc *corev1.PersistentVolumeCl
 			return nil, err
 		}
 	}
+	if f.annotation == DataLocalityAnnotation && parsed == "strict-local" {
+		// Entering strict-local would prevent a valid increase in replicas.
+		count, err := r.desiredReplicas(ctx, pvc, volume)
+		if err != nil && !isInvalid(err) {
+			return nil, err
+		}
+		if err == nil && count > 1 {
+			return nil, invalid(fmt.Errorf("dataLocality=strict-local conflicts with desired replica count %d, which must be 1", count))
+		}
+	}
 	return parsed, nil
 }
 
