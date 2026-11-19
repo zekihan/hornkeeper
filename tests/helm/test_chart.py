@@ -102,7 +102,10 @@ class ChartTests(unittest.TestCase):
 
     def test_leader_election_keeps_rolling_update_strategy(self):
         deployment = get(resources(), "Deployment")
-        self.assertEqual(deployment["spec"]["strategy"]["type"], "RollingUpdate")
+        self.assertEqual(deployment["spec"]["strategy"], {
+            "type": "RollingUpdate",
+            "rollingUpdate": {"maxSurge": "25%", "maxUnavailable": "25%"},
+        })
 
     def test_single_replica_without_election_or_metrics(self):
         items = resources({"replicaCount": 1, "controller": {"leaderElection": False},

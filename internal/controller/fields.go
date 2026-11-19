@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"math/big"
 	"slices"
 	"strconv"
 	"strings"
@@ -101,11 +102,29 @@ func byteSize(value string) (any, error) {
 	if err != nil {
 		return nil, fmt.Errorf("expected a byte quantity such as 0 or 20Gi: %w", err)
 	}
-	bytes, ok := quantity.AsInt64()
-	if !ok || bytes < 0 {
-		return nil, fmt.Errorf("expected a whole, non-negative byte quantity")
+	if bytes, ok := quantity.AsInt64(); ok && bytes >= 0 {
+		return strconv.FormatInt(bytes, 10), nil
 	}
-	return strconv.FormatInt(bytes, 10), nil
+
+	// The decimal representation can round fractions or clamp oversized binary
+	// quantities. Use the original number when the fast path is unavailable.
+	number := value
+	var unit big.Rat
+	unit.SetInt64(1)
+	if quantity.Format != resource.DecimalExponent {
+		suffix := strings.TrimLeft(value, "+-.0123456789")
+		number = strings.TrimSuffix(value, suffix)
+		multiplier := resource.MustParse("1" + suffix)
+		unit.SetString(multiplier.AsDec().String())
+	}
+	var bytes big.Rat
+	if _, ok := bytes.SetString(number); ok {
+		bytes.Mul(&bytes, &unit)
+		if bytes.IsInt() && bytes.Num().IsInt64() && bytes.Sign() >= 0 {
+			return bytes.Num().String(), nil
+		}
+	}
+	return nil, fmt.Errorf("expected a whole, non-negative byte quantity within int64 range")
 }
 
 func checkDataLocality(volume *unstructured.Unstructured, desired any) error {
