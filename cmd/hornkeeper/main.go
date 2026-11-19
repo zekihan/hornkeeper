@@ -15,10 +15,13 @@ import (
 	"github.com/zekihan/hornkeeper/internal/config"
 	"github.com/zekihan/hornkeeper/internal/controller"
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/meta"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/client-go/rest"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/cache"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/client/apiutil"
 	controllerconfig "sigs.k8s.io/controller-runtime/pkg/config"
 	"sigs.k8s.io/controller-runtime/pkg/healthz"
 	"sigs.k8s.io/controller-runtime/pkg/metrics"
@@ -26,6 +29,12 @@ import (
 )
 
 var version = "dev"
+
+const (
+	startupTimeout          = 30 * time.Second
+	gracefulShutdownTimeout = 20 * time.Second
+	processShutdownTimeout  = gracefulShutdownTimeout + 5*time.Second
+)
 
 func main() {
 	if err := run(); err != nil {
@@ -68,36 +77,40 @@ func run() error {
 		return err
 	}
 	ctx := ctrl.SetupSignalHandler()
+	return runWithShutdownTimeout(ctx, processShutdownTimeout, func() error {
+		return runController(ctx, cfg)
+	})
+}
+
+func runWithShutdownTimeout(ctx context.Context, timeout time.Duration, start func() error) error {
+	done := make(chan error, 1)
+	go func() { done <- start() }()
+	select {
+	case err := <-done:
+		return err
+	case <-ctx.Done():
+	}
+
+	// The manager's graceful shutdown timeout cannot help while startup is blocked.
+	select {
+	case err := <-done:
+		return err
+	case <-time.After(timeout):
+		return fmt.Errorf("controller shutdown exceeded %s: %w", timeout, context.DeadlineExceeded)
+	}
+}
+
+func runController(ctx context.Context, cfg config.Config) error {
 	apiConfig, err := ctrl.GetConfig()
 	if err != nil {
 		return fmt.Errorf("load Kubernetes configuration: %w", err)
 	}
 	apiConfig.UserAgent = "hornkeeper/" + version
-	scheme := runtime.NewScheme()
-	if err := corev1.AddToScheme(scheme); err != nil {
-		return err
-	}
-	mgr, err := ctrl.NewManager(apiConfig, ctrl.Options{
-		Scheme:     scheme,
-		Controller: controllerconfig.Controller{ReconciliationTimeout: 30 * time.Second},
-		Cache: cache.Options{
-			ReaderFailOnMissingInformer: true,
-			ByObject: map[client.Object]cache.ByObject{
-				controller.Resource(controller.VolumeGVK):       {Namespaces: map[string]cache.Config{cfg.LonghornNamespace: {}}},
-				controller.Resource(controller.BackupTargetGVK): {Namespaces: map[string]cache.Config{cfg.LonghornNamespace: {}}},
-			},
-		},
-		Metrics:                 metricsserver.Options{BindAddress: cfg.MetricsAddress},
-		HealthProbeBindAddress:  cfg.HealthAddress,
-		LeaderElection:          cfg.LeaderElection,
-		LeaderElectionID:        "hornkeeper.noqer.com",
-		LeaderElectionNamespace: cfg.LeaderNamespace,
-		GracefulShutdownTimeout: new(20 * time.Second),
-	})
+	mgr, err := newManager(apiConfig, cfg)
 	if err != nil {
 		return fmt.Errorf("create manager: %w", err)
 	}
-	startupCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	startupCtx, cancel := context.WithTimeout(ctx, startupTimeout)
 	defer cancel()
 	if err := controller.CheckBackupTarget(startupCtx, mgr.GetAPIReader(), cfg.LonghornNamespace, cfg.BackupTarget); err != nil {
 		return fmt.Errorf("validate default backup target at startup: %w", err)
@@ -128,6 +141,36 @@ func run() error {
 	slog.InfoContext(ctx, "Starting hornkeeper", "version", version, "longhornNamespace", cfg.LonghornNamespace,
 		"defaultBackupTarget", cfg.BackupTarget, "defaultReplicas", cfg.Replicas, "leaderElection", cfg.LeaderElection, "dryRun", cfg.DryRun)
 	return mgr.Start(ctx)
+}
+
+func newManager(apiConfig *rest.Config, cfg config.Config) (ctrl.Manager, error) {
+	scheme := runtime.NewScheme()
+	if err := corev1.AddToScheme(scheme); err != nil {
+		return nil, err
+	}
+	return ctrl.NewManager(apiConfig, ctrl.Options{
+		Scheme:     scheme,
+		Controller: controllerconfig.Controller{ReconciliationTimeout: 30 * time.Second},
+		MapperProvider: func(restConfig *rest.Config, httpClient *http.Client) (meta.RESTMapper, error) {
+			// Discovery runs without the caller's context, including during manager creation.
+			discoveryClient := *httpClient
+			discoveryClient.Timeout = startupTimeout
+			return apiutil.NewDynamicRESTMapper(restConfig, &discoveryClient)
+		},
+		Cache: cache.Options{
+			ReaderFailOnMissingInformer: true,
+			ByObject: map[client.Object]cache.ByObject{
+				controller.Resource(controller.VolumeGVK):       {Namespaces: map[string]cache.Config{cfg.LonghornNamespace: {}}},
+				controller.Resource(controller.BackupTargetGVK): {Namespaces: map[string]cache.Config{cfg.LonghornNamespace: {}}},
+			},
+		},
+		Metrics:                 metricsserver.Options{BindAddress: cfg.MetricsAddress},
+		HealthProbeBindAddress:  cfg.HealthAddress,
+		LeaderElection:          cfg.LeaderElection,
+		LeaderElectionID:        "hornkeeper.noqer.com",
+		LeaderElectionNamespace: cfg.LeaderNamespace,
+		GracefulShutdownTimeout: new(gracefulShutdownTimeout),
+	})
 }
 
 type cacheReady struct {
