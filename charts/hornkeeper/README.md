@@ -50,6 +50,11 @@ With leader election enabled, the Deployment uses Kubernetes `RollingUpdate`;
 with leader election disabled, it uses `Recreate` to prevent overlapping controllers
 during an update. The health listener and probes remain enabled when metrics are disabled.
 
+If an older release was installed with server-side apply and its chart did not
+declare `spec.strategy.rollingUpdate`, first upgrade to a chart that declares it
+with leader election still enabled. Then upgrade with
+`controller.leaderElection=false` and `replicaCount=1`.
+
 Changing defaults affects all enabled claims without the corresponding override.
 Updating the desired replica count does not mean Longhorn has finished rebuilding.
 See the application's README for label and annotation behavior, permissions and troubleshooting.

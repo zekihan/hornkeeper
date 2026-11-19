@@ -9,6 +9,12 @@ spec:
   replicas: {{ .Values.replicaCount }}
   strategy:
     type: {{ ternary "RollingUpdate" "Recreate" .Values.controller.leaderElection }}
+    {{- if .Values.controller.leaderElection }}
+    # Declare the defaults so Helm owns them and can remove them when switching to Recreate.
+    rollingUpdate:
+      maxSurge: "25%"
+      maxUnavailable: "25%"
+    {{- end }}
   selector:
     matchLabels:
       {{- include "hornkeeper.selectorLabels" . | nindent 6 }}
