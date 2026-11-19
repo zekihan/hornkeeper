@@ -71,35 +71,39 @@ func unrecognizedOptIn(obj client.Object) bool {
 	return exists && value != "true" && value != "false"
 }
 
-func (r *Reconciler) resolve(ctx context.Context, key client.ObjectKey) (*corev1.PersistentVolumeClaim, *unstructured.Unstructured, error) {
+func (r *Reconciler) resolveBinding(ctx context.Context, key client.ObjectKey) (*corev1.PersistentVolumeClaim, string, error) {
 	pvc := &corev1.PersistentVolumeClaim{}
 	if err := r.Reader.Get(ctx, key, pvc); err != nil {
-		return nil, nil, client.IgnoreNotFound(err)
+		return nil, "", client.IgnoreNotFound(err)
 	}
 	if !enabled(pvc) || pvc.Spec.VolumeName == "" || pvc.Status.Phase != corev1.ClaimBound {
-		return pvc, nil, nil
+		return pvc, "", nil
 	}
 	pv := &corev1.PersistentVolume{}
 	if err := r.Reader.Get(ctx, client.ObjectKey{Name: pvc.Spec.VolumeName}, pv); err != nil {
-		return pvc, nil, client.IgnoreNotFound(err)
+		return pvc, "", client.IgnoreNotFound(err)
 	}
 	ref := pv.Spec.ClaimRef
 	if !pv.DeletionTimestamp.IsZero() || pv.Status.Phase != corev1.VolumeBound || ref == nil ||
 		ref.Namespace != pvc.Namespace || ref.Name != pvc.Name || ref.UID != pvc.UID {
 		ctrl.LoggerFrom(ctx).Info("Waiting for matching bound PV claim reference", "pv", pv.Name)
-		return pvc, nil, nil
+		return pvc, "", nil
 	}
 	if pv.Spec.CSI == nil || pv.Spec.CSI.Driver != LonghornDriver || pv.Spec.CSI.VolumeHandle == "" {
-		return pvc, nil, nil
+		return pvc, "", nil
 	}
+	return pvc, pv.Spec.CSI.VolumeHandle, nil
+}
+
+func (r *Reconciler) readVolume(ctx context.Context, handle string) (*unstructured.Unstructured, error) {
 	volume := Resource(VolumeGVK)
-	if err := r.Reader.Get(ctx, client.ObjectKey{Namespace: r.Config.LonghornNamespace, Name: pv.Spec.CSI.VolumeHandle}, volume); err != nil {
-		return pvc, nil, client.IgnoreNotFound(err)
+	if err := r.Reader.Get(ctx, client.ObjectKey{Namespace: r.Config.LonghornNamespace, Name: handle}, volume); err != nil {
+		return nil, client.IgnoreNotFound(err)
 	}
 	if !volume.GetDeletionTimestamp().IsZero() {
-		return pvc, nil, nil
+		return nil, nil
 	}
-	return pvc, volume, nil
+	return volume, nil
 }
 
 func (r *Reconciler) reconcileField(ctx context.Context, key client.ObjectKey, f volumeField) error {
@@ -107,7 +111,11 @@ func (r *Reconciler) reconcileField(ctx context.Context, key client.ObjectKey, f
 	result := "waiting"
 	err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
 		// Direct API reads on every attempt re-check opt-in, binding and resourceVersion.
-		pvc, volume, err := r.resolve(ctx, key)
+		pvc, handle, err := r.resolveBinding(ctx, key)
+		if err != nil || handle == "" {
+			return err
+		}
+		volume, err := r.readVolume(ctx, handle)
 		if err != nil || volume == nil {
 			return err
 		}
@@ -134,6 +142,14 @@ func (r *Reconciler) reconcileField(ctx context.Context, key client.ObjectKey, f
 		}
 		if reflect.DeepEqual(current, desired) {
 			result = "unchanged"
+			return nil
+		}
+		// The volume and backup target reads can outlast a PV binding or a claim policy change.
+		latestClaim, latestHandle, err := r.resolveBinding(ctx, key)
+		if err != nil || latestHandle != handle {
+			return err
+		}
+		if latestClaim.UID != pvc.UID || latestClaim.ResourceVersion != pvc.ResourceVersion {
 			return nil
 		}
 		if r.Config.DryRun {
