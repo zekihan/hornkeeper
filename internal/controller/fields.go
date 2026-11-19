@@ -44,6 +44,8 @@ type volumeField struct {
 	// dedicated functions that also consult deployment configuration.
 	parse func(string) (any, error)
 	check func(volume *unstructured.Unstructured, desired any) error
+	// Longhorn omits unset ublk fields when serializing a Volume.
+	zeroWhenAbsent bool
 }
 
 func (f volumeField) optional() bool { return f.parse != nil }
@@ -67,8 +69,8 @@ var volumeFields = []volumeField{
 	{name: "snapshotMaxSize", annotation: SnapshotMaxSizeAnnotation, parse: byteSize, check: checkSnapshotMaxSize},
 	{name: "rebuildConcurrentSyncLimit", annotation: RebuildConcurrentSyncLimitAnnotation, parse: integer(0, 5)},
 	{name: "replicaRebuildingBandwidthLimit", annotation: ReplicaRebuildingBandwidthLimitAnnotation, parse: integer(0, math.MaxInt64), check: checkRebuildingBandwidthLimit},
-	{name: "ublkQueueDepth", annotation: UblkQueueDepthAnnotation, parse: integer(0, math.MaxInt32), check: checkUblkQueueDepth},
-	{name: "ublkNumberOfQueue", annotation: UblkNumberOfQueueAnnotation, parse: integer(0, math.MaxInt32)},
+	{name: "ublkQueueDepth", annotation: UblkQueueDepthAnnotation, parse: integer(0, math.MaxInt32), check: checkUblkQueueDepth, zeroWhenAbsent: true},
+	{name: "ublkNumberOfQueue", annotation: UblkNumberOfQueueAnnotation, parse: integer(0, math.MaxInt32), zeroWhenAbsent: true},
 }
 
 func enum(values ...string) func(string) (any, error) {

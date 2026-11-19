@@ -198,7 +198,6 @@ func TestOptionalFieldsAccepted(t *testing.T) {
 		{"whole bytes with decimal exponent", SnapshotMaxSizeAnnotation, "21474836480e-1", "snapshotMaxSize", "2147483648", nil},
 		{"largest int64 byte size", SnapshotMaxSizeAnnotation, "9223372036854775807", "snapshotMaxSize", "9223372036854775807", nil},
 		{"largest int64 byte size in KiB", SnapshotMaxSizeAnnotation, "9007199254740991.9990234375Ki", "snapshotMaxSize", "9223372036854775807", nil},
-		{"zero ublk depth", UblkQueueDepthAnnotation, "0", "ublkQueueDepth", int64(0), nil},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			f := newFixture(t)
@@ -209,6 +208,38 @@ func TestOptionalFieldsAccepted(t *testing.T) {
 			f.reconcile(t)
 			if got := f.specField(t, tc.field); !reflect.DeepEqual(got, tc.want) {
 				t.Fatalf("got %s=%#v, want %#v", tc.field, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestUblkZeroMatchesAbsentFields(t *testing.T) {
+	for _, tc := range []struct {
+		annotation, field string
+		nonzero           int64
+	}{
+		{UblkQueueDepthAnnotation, "ublkQueueDepth", 64},
+		{UblkNumberOfQueueAnnotation, "ublkNumberOfQueue", 4},
+	} {
+		t.Run(tc.field, func(t *testing.T) {
+			f := newFixture(t)
+			f.reconcile(t)
+			before := f.patches
+			f.metadata(t, map[string]string{EnabledLabel: "true", tc.annotation: "0"})
+			f.reconcile(t)
+			if f.patches != before {
+				t.Fatalf("patched absent %s to zero", tc.field)
+			}
+			if got := testutil.ToFloat64(f.r.Metrics.Fields.WithLabelValues(tc.field, "unchanged")); got != 1 {
+				t.Fatalf("unchanged metric = %v, want 1", got)
+			}
+
+			f.updateVolume(t, func(v *unstructured.Unstructured) {
+				unstructured.SetNestedField(v.Object, tc.nonzero, "spec", tc.field)
+			})
+			f.reconcile(t)
+			if got := f.specField(t, tc.field); got != int64(0) {
+				t.Fatalf("got %s = %v after reset, want 0", tc.field, got)
 			}
 		})
 	}
