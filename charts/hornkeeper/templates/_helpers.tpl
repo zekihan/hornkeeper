@@ -8,7 +8,7 @@
 {{- else if contains (include "hornkeeper.name" .) .Release.Name -}}
 {{- .Release.Name | trunc 63 | trimSuffix "-" -}}
 {{- else -}}
-{{- printf "%s-%s" .Release.Name (include "hornkeeper.name" .) | trunc 63 | trimSuffix "-" -}}
+{{- printf "%s-%s" .Release.Name (include "hornkeeper.name" .) | trunc 63 | trimAll "-" -}}
 {{- end -}}
 {{- end -}}
 

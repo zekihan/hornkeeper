@@ -16,6 +16,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/serializer"
+	"k8s.io/apimachinery/pkg/util/validation"
 	"k8s.io/apimachinery/pkg/util/yaml"
 )
 
@@ -33,8 +34,8 @@ func helmBinary(t *testing.T) string {
 }
 
 // Helm's renderer accepts YAML scalars that Kubernetes cannot decode into string
-// fields. Decode every resource through the actual Kubernetes API types as well.
-func TestRenderedChartDecodesKubernetesStrings(t *testing.T) {
+// fields and resource names that Kubernetes can decode but rejects on admission.
+func TestRenderedChartKubernetesNames(t *testing.T) {
 	helm := helmBinary(t)
 	scheme := runtime.NewScheme()
 	for _, add := range []func(*runtime.Scheme) error{corev1.AddToScheme, appsv1.AddToScheme, rbacv1.AddToScheme} {
@@ -49,6 +50,8 @@ func TestRenderedChartDecodesKubernetesStrings(t *testing.T) {
 	}{
 		{name: "numeric release", release: "2026", namespace: "hornkeeper"},
 		{name: "boolean release", release: "on", namespace: "hornkeeper"},
+		{name: "dotted release", release: "ops.test", namespace: "hornkeeper"},
+		{name: "truncation through consecutive hyphens", release: "volumes", namespace: "hornkeeper", values: []string{"nameOverride=" + strings.Repeat("a", 53) + "--b"}},
 		{name: "boolean name override", release: "hornkeeper", namespace: "hornkeeper", values: []string{"nameOverride=on"}},
 		{name: "numeric fullname", release: "hornkeeper", namespace: "hornkeeper", values: []string{"fullnameOverride=123"}},
 		{name: "boolean service account", release: "hornkeeper", namespace: "hornkeeper", values: []string{"serviceAccount.name=yes"}},
@@ -84,6 +87,17 @@ func TestRenderedChartDecodesKubernetesStrings(t *testing.T) {
 				metadata := obj.(metav1.Object)
 				if got := metadata.GetLabels()["app.kubernetes.io/instance"]; got != tc.release {
 					t.Errorf("%s release label = %q, want %q", gvk.Kind, got, tc.release)
+				}
+				name := metadata.GetName()
+				var nameErrors []string
+				switch obj.(type) {
+				case *corev1.Service:
+					nameErrors = validation.IsDNS1123Label(name)
+				case *appsv1.Deployment, *corev1.ServiceAccount:
+					nameErrors = validation.IsDNS1123Subdomain(name)
+				}
+				if len(nameErrors) != 0 {
+					t.Errorf("%s name %q is invalid: %v", gvk.Kind, name, nameErrors)
 				}
 				count++
 			}
