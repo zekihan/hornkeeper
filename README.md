@@ -92,9 +92,11 @@ patching and leaves the field unchanged when they fail:
 
 Longhorn also rejects lowering `snapshot-max-count` or `snapshot-max-size` below
 current snapshot usage, or changing them during migration; those rejections are
-retried like any other admission failure. When switching to `strict-local` and to 1
-replica, the replica count changes first. Locality changes on a subsequent
-reconciliation once the volume is detached.
+retried like any other admission failure. A valid replica override or controller
+default above 1 prevents entering `strict-local`, even if the volume currently has
+one replica. When switching to `strict-local` and to 1 replica, the replica count
+changes first. Locality changes on a subsequent reconciliation once the volume
+is detached.
 
 Settings Longhorn fixes at creation or owns operationally are deliberately not
 exposed: access mode, size, data engine, frontend, encryption, backing image,
