@@ -122,6 +122,10 @@ func TestOptionalFieldsInvalid(t *testing.T) {
 		{"bad size", SnapshotMaxSizeAnnotation, "lots", "snapshotMaxSize", nil},
 		{"negative size", SnapshotMaxSizeAnnotation, "-1Gi", "snapshotMaxSize", nil},
 		{"fractional size", SnapshotMaxSizeAnnotation, "1m", "snapshotMaxSize", nil},
+		{"fractional bytes above size floor", SnapshotMaxSizeAnnotation, "2.0001Gi", "snapshotMaxSize", nil},
+		{"fractional bytes near an integer", SnapshotMaxSizeAnnotation, "2147483647.9999999999", "snapshotMaxSize", nil},
+		{"binary size overflow", SnapshotMaxSizeAnnotation, "8Ei", "snapshotMaxSize", nil},
+		{"decimal size overflow", SnapshotMaxSizeAnnotation, "9223372036854775808", "snapshotMaxSize", nil},
 		{"size below twice volume", SnapshotMaxSizeAnnotation, "2047Mi", "snapshotMaxSize", nil},
 		{"bandwidth on v1", ReplicaRebuildingBandwidthLimitAnnotation, "100", "replicaRebuildingBandwidthLimit", nil},
 		{"unmap on v2", UnmapMarkSnapChainRemovedAnnotation, "enabled", "unmapMarkSnapChainRemoved", func(v *unstructured.Unstructured) {
@@ -189,6 +193,11 @@ func TestOptionalFieldsAccepted(t *testing.T) {
 			unstructured.SetNestedField(v.Object, "detached", "status", "state")
 		}},
 		{"size exactly twice volume", SnapshotMaxSizeAnnotation, "2Gi", "snapshotMaxSize", "2147483648", nil},
+		{"fractional GiB with whole bytes", SnapshotMaxSizeAnnotation, "2.5Gi", "snapshotMaxSize", "2684354560", nil},
+		{"whole bytes with decimal point", SnapshotMaxSizeAnnotation, "2147483648.0", "snapshotMaxSize", "2147483648", nil},
+		{"whole bytes with decimal exponent", SnapshotMaxSizeAnnotation, "21474836480e-1", "snapshotMaxSize", "2147483648", nil},
+		{"largest int64 byte size", SnapshotMaxSizeAnnotation, "9223372036854775807", "snapshotMaxSize", "9223372036854775807", nil},
+		{"largest int64 byte size in KiB", SnapshotMaxSizeAnnotation, "9007199254740991.9990234375Ki", "snapshotMaxSize", "9223372036854775807", nil},
 		{"zero ublk depth", UblkQueueDepthAnnotation, "0", "ublkQueueDepth", int64(0), nil},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
