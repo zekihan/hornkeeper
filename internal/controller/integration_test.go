@@ -276,6 +276,35 @@ func TestDisposableAPIServer(t *testing.T) {
 	if n, _, _ := unstructured.NestedInt64(untouched.Object, "spec", "numberOfReplicas"); n != 1 {
 		t.Fatal("unlabelled volume changed")
 	}
+
+	volume.Object["status"] = map[string]any{"state": "attached"}
+	if err := c.Status().Update(ctx, volume); err != nil {
+		t.Fatal(err)
+	}
+	invalidLocality := m.Fields.WithLabelValues("dataLocality", "invalid")
+	invalidLocalityBefore := testutil.ToFloat64(invalidLocality)
+	updateMetadata(map[string]string{EnabledLabel: "true", ReplicasAnnotation: "1", DataLocalityAnnotation: "strict-local"})
+	waitFor(t, func() bool {
+		return assertSettings("rustfs", 1) && testutil.ToFloat64(invalidLocality) > invalidLocalityBefore
+	}, "strict-local request held while attached")
+	if err := c.Get(ctx, client.ObjectKeyFromObject(volume), volume); err != nil {
+		t.Fatal(err)
+	}
+	generation := volume.GetGeneration()
+	volume.Object["status"] = map[string]any{"state": "detached"}
+	if err := c.Status().Update(ctx, volume); err != nil {
+		t.Fatal(err)
+	}
+	if volume.GetGeneration() != generation {
+		t.Fatal("detachment changed the Volume generation")
+	}
+	waitFor(t, func() bool {
+		if err := c.Get(ctx, client.ObjectKeyFromObject(volume), volume); err != nil {
+			return false
+		}
+		locality, _, _ := unstructured.NestedString(volume.Object, "spec", "dataLocality")
+		return locality == "strict-local"
+	}, "strict-local applied after a status-only detach event")
 }
 
 func waitFor(t *testing.T, check func() bool, description string) {

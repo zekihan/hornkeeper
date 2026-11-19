@@ -92,9 +92,9 @@ patching and leaves the field unchanged when they fail:
 
 Longhorn also rejects lowering `snapshot-max-count` or `snapshot-max-size` below
 current snapshot usage, or changing them during migration; those rejections are
-retried like any other admission failure. Switching to `strict-local` and to 1
-replica converges over consecutive reconciliations: the replica count changes
-first, then locality on the next periodic retry.
+retried like any other admission failure. When switching to `strict-local` and to 1
+replica, the replica count changes first. Locality changes on a subsequent
+reconciliation once the volume is detached.
 
 Settings Longhorn fixes at creation or owns operationally are deliberately not
 exposed: access mode, size, data engine, frontend, encryption, backing image,
@@ -221,8 +221,10 @@ PVs/volumes are retried; existing resources are reconciled on startup. Restore
 source fields are left unchanged.
 
 PVC label/annotation/binding changes, PV changes, Longhorn volume spec changes and target
-changes trigger reconciliation. Indexed reverse lookups map volume events to
-claims. A periodic retry also covers missed events and transient restrictions.
+changes trigger reconciliation. The volume watch also reacts when a volume enters
+or leaves the detached state and when its legacy linked-clone restriction changes.
+Indexed reverse lookups map volume events to claims. A periodic retry also covers
+missed events and transient restrictions.
 Each field gets a separate resourceVersion-protected merge patch. Conflicts cause
 fresh reads and bounded immediate retries, followed by the work queue's backoff.
 Other failures are retried with backoff. Each reconciliation has a 30-second
