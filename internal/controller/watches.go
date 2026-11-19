@@ -99,9 +99,10 @@ var volumeChanges = predicate.Funcs{
 var optIn = predicate.Funcs{
 	CreateFunc: func(e event.CreateEvent) bool { return optInEvent(e.Object) },
 	UpdateFunc: func(e event.UpdateEvent) bool {
-		oldValue, newValue := e.ObjectOld.GetLabels()[EnabledLabel], e.ObjectNew.GetLabels()[EnabledLabel]
+		oldValue, oldExists := e.ObjectOld.GetLabels()[EnabledLabel]
+		newValue := e.ObjectNew.GetLabels()[EnabledLabel]
 		// Unrecognized values are reconciled only when they change, so the warning is not repeated on every update.
-		return oldValue == "true" || newValue == "true" || (unrecognizedOptIn(e.ObjectNew) && oldValue != newValue)
+		return oldValue == "true" || newValue == "true" || (unrecognizedOptIn(e.ObjectNew) && (!oldExists || oldValue != newValue))
 	},
 	DeleteFunc:  func(event.DeleteEvent) bool { return false },
 	GenericFunc: func(e event.GenericEvent) bool { return optInEvent(e.Object) },

@@ -125,9 +125,12 @@ func (r *Reconciler) reconcileField(ctx context.Context, key client.ObjectKey, f
 			}
 			return err
 		}
-		current, _, err := unstructured.NestedFieldNoCopy(volume.Object, "spec", field)
+		current, found, err := unstructured.NestedFieldNoCopy(volume.Object, "spec", field)
 		if err != nil {
 			return err
+		}
+		if !found && f.zeroWhenAbsent {
+			current = int64(0)
 		}
 		if reflect.DeepEqual(current, desired) {
 			result = "unchanged"
