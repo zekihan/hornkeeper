@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"io"
 	"net/http"
@@ -12,9 +13,37 @@ import (
 	"testing"
 	"time"
 
+	"github.com/zekihan/hornkeeper/internal/config"
+	"k8s.io/client-go/rest"
 	"sigs.k8s.io/controller-runtime/pkg/cache"
 	"sigs.k8s.io/controller-runtime/pkg/healthz"
 )
+
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) { return f(req) }
+
+func TestStartupDiscoveryHasDeadline(t *testing.T) {
+	stop := errors.New("stop after discovery request")
+	apiConfig := &rest.Config{
+		Host: "https://api.example.invalid",
+		Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+			if req.URL.Path != "/api" {
+				t.Errorf("request path = %q, want /api discovery", req.URL.Path)
+			}
+			if deadline, ok := req.Context().Deadline(); !ok || time.Until(deadline) > startupTimeout {
+				t.Errorf("discovery must have a request deadline within %s, got %v (set: %v)", startupTimeout, deadline, ok)
+			}
+			return nil, stop
+		}),
+	}
+	cfg := config.Default()
+	cfg.LeaderElection = false
+	cfg.HealthAddress = "0"
+	if _, err := newManager(apiConfig, cfg); !errors.Is(err, stop) {
+		t.Fatalf("create manager = %v, want discovery transport error", err)
+	}
+}
 
 type readinessCache struct {
 	cache.Cache
