@@ -7,10 +7,45 @@ import (
 	"github.com/zekihan/hornkeeper/internal/config"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/event"
 )
+
+func TestVolumeChangePredicate(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		mutate func(*unstructured.Unstructured)
+		want   bool
+	}{
+		{"detached", func(v *unstructured.Unstructured) {
+			v.Object["status"].(map[string]any)["state"] = "detached"
+		}, true},
+		{"legacy clone restriction cleared", func(v *unstructured.Unstructured) {
+			v.SetLabels(nil)
+		}, true},
+		{"spec change", func(v *unstructured.Unstructured) {
+			v.SetGeneration(2)
+		}, true},
+		{"unrelated status and label changes", func(v *unstructured.Unstructured) {
+			v.Object["status"].(map[string]any)["robustness"] = "degraded"
+			v.SetLabels(map[string]string{"longhorn.io/legacy-linked-clone": "true", "unrelated": "changed"})
+		}, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			old := Resource(VolumeGVK)
+			old.SetGeneration(1)
+			old.SetLabels(map[string]string{"longhorn.io/legacy-linked-clone": "true"})
+			old.Object["status"] = map[string]any{"state": "attached", "robustness": "healthy"}
+			updated := old.DeepCopy()
+			tc.mutate(updated)
+			if got := volumeChanges.Update(event.UpdateEvent{ObjectOld: old, ObjectNew: updated}); got != tc.want {
+				t.Errorf("enqueue for volume update = %t, want %t", got, tc.want)
+			}
+		})
+	}
+}
 
 func TestClaimBackupTargetIndex(t *testing.T) {
 	r := &Reconciler{Config: config.Config{BackupTarget: "custom-default"}}

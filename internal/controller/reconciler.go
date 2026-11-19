@@ -245,7 +245,7 @@ func (r *Reconciler) desiredReplicas(ctx context.Context, pvc *corev1.Persistent
 	if layout == "sharded" && count != 1 {
 		return 0, invalid(fmt.Errorf("replicas=%d conflicts with sharded data layout, which requires 1", count))
 	}
-	if volume.GetLabels()["longhorn.io/legacy-linked-clone"] == "true" {
+	if volume.GetLabels()[legacyLinkedCloneLabel] == "true" {
 		current, _, err := unstructured.NestedInt64(volume.Object, "spec", "numberOfReplicas")
 		if err != nil {
 			return 0, err

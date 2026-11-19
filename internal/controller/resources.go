@@ -15,6 +15,7 @@ const (
 	BackupTargetAnnotation = keyPrefix + "backup-target"
 	ReplicasAnnotation     = keyPrefix + "replicas"
 	LonghornDriver         = "driver.longhorn.io"
+	legacyLinkedCloneLabel = "longhorn.io/legacy-linked-clone"
 )
 
 var (

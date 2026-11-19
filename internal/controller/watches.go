@@ -4,6 +4,7 @@ import (
 	"context"
 
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/cache"
@@ -68,9 +69,31 @@ func (r *Reconciler) SetupWithManager(ctx context.Context, mgr ctrl.Manager) err
 		Named("hornkeeper").
 		For(&corev1.PersistentVolumeClaim{}, builder.WithPredicates(optIn)).
 		Watches(&corev1.PersistentVolume{}, handler.EnqueueRequestsFromMapFunc(r.ClaimsForPV)).
-		Watches(Resource(VolumeGVK), handler.EnqueueRequestsFromMapFunc(r.ClaimsForVolume), builder.WithPredicates(predicate.GenerationChangedPredicate{})).
+		Watches(Resource(VolumeGVK), handler.EnqueueRequestsFromMapFunc(r.ClaimsForVolume), builder.WithPredicates(volumeChanges)).
 		Watches(Resource(BackupTargetGVK), handler.EnqueueRequestsFromMapFunc(r.ClaimsForTarget)).
 		Complete(r)
+}
+
+var volumeChanges = predicate.Funcs{
+	UpdateFunc: func(e event.UpdateEvent) bool {
+		oldVolume, oldOK := e.ObjectOld.(*unstructured.Unstructured)
+		newVolume, newOK := e.ObjectNew.(*unstructured.Unstructured)
+		if !oldOK || !newOK || oldVolume == nil || newVolume == nil {
+			return false
+		}
+		if oldVolume.GetGeneration() != newVolume.GetGeneration() {
+			return true
+		}
+		// Replica and locality restrictions can change without a spec update.
+		oldLegacyClone := oldVolume.GetLabels()[legacyLinkedCloneLabel] == "true"
+		newLegacyClone := newVolume.GetLabels()[legacyLinkedCloneLabel] == "true"
+		if oldLegacyClone != newLegacyClone {
+			return true
+		}
+		oldState, _, _ := unstructured.NestedString(oldVolume.Object, "status", "state")
+		newState, _, _ := unstructured.NestedString(newVolume.Object, "status", "state")
+		return (oldState == "detached") != (newState == "detached")
+	},
 }
 
 var optIn = predicate.Funcs{
