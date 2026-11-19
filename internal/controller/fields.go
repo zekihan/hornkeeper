@@ -151,13 +151,27 @@ func checkDataLocality(volume *unstructured.Unstructured, desired any) error {
 			return invalid(fmt.Errorf("dataLocality can only change from %s to %s while the volume is detached", current, locality))
 		}
 	}
-	if locality == "strict-local" {
-		replicas, _, err := unstructured.NestedInt64(volume.Object, "spec", "numberOfReplicas")
+	if locality != "strict-local" {
+		return nil
+	}
+	replicas, _, err := unstructured.NestedInt64(volume.Object, "spec", "numberOfReplicas")
+	if err != nil {
+		return err
+	}
+	if replicas != 1 {
+		return invalid(fmt.Errorf("dataLocality=strict-local requires 1 replica, volume has %d", replicas))
+	}
+	accessMode, _, err := unstructured.NestedString(volume.Object, "spec", "accessMode")
+	if err != nil {
+		return err
+	}
+	if accessMode == "rwx" {
+		migratable, _, err := unstructured.NestedBool(volume.Object, "spec", "migratable")
 		if err != nil {
 			return err
 		}
-		if replicas != 1 {
-			return invalid(fmt.Errorf("dataLocality=strict-local requires 1 replica, volume has %d", replicas))
+		if !migratable {
+			return invalid(fmt.Errorf("dataLocality=strict-local is incompatible with non-migratable RWX volumes"))
 		}
 	}
 	return nil
