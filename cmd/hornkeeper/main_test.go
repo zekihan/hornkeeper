@@ -15,8 +15,10 @@ import (
 
 	"github.com/zekihan/hornkeeper/internal/config"
 	"k8s.io/client-go/rest"
+	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/cache"
 	"sigs.k8s.io/controller-runtime/pkg/healthz"
+	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
 )
 
 type roundTripFunc func(*http.Request) (*http.Response, error)
@@ -42,6 +44,78 @@ func TestStartupDiscoveryHasDeadline(t *testing.T) {
 	cfg.HealthAddress = "0"
 	if _, err := newManager(apiConfig, cfg); !errors.Is(err, stop) {
 		t.Fatalf("create manager = %v, want discovery transport error", err)
+	}
+}
+
+type blockedCacheSync struct {
+	cache.Cache
+	waiting chan struct{}
+	release chan struct{}
+}
+
+func (c *blockedCacheSync) Start(ctx context.Context) error {
+	<-ctx.Done()
+	return nil
+}
+
+func (c *blockedCacheSync) WaitForCacheSync(ctx context.Context) bool {
+	close(c.waiting)
+	select {
+	case <-c.release:
+		return true
+	case <-ctx.Done():
+		return false
+	}
+}
+
+func TestShutdownWhileCacheSyncIsBlocked(t *testing.T) {
+	blocked := &blockedCacheSync{waiting: make(chan struct{}), release: make(chan struct{})}
+	apiConfig := &rest.Config{
+		Host: "https://api.example.invalid",
+		Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+			return nil, errors.New("unexpected API request")
+		}),
+	}
+	mgr, err := ctrl.NewManager(apiConfig, ctrl.Options{
+		NewCache:                func(*rest.Config, cache.Options) (cache.Cache, error) { return blocked, nil },
+		Metrics:                 metricsserver.Options{BindAddress: "0"},
+		HealthProbeBindAddress:  "0",
+		GracefulShutdownTimeout: new(time.Second),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	managerDone := make(chan struct{})
+	t.Cleanup(func() {
+		close(blocked.release)
+		select {
+		case <-managerDone:
+		case <-time.After(3 * time.Second):
+			t.Error("manager did not stop after releasing cache sync")
+		}
+	})
+	result := make(chan error, 1)
+	go func() {
+		result <- runWithShutdownTimeout(ctx, 20*time.Millisecond, func() error {
+			defer close(managerDone)
+			return mgr.Start(ctx)
+		})
+	}()
+	select {
+	case <-blocked.waiting:
+	case <-time.After(3 * time.Second):
+		t.Fatal("manager did not reach cache sync")
+	}
+	cancel()
+	select {
+	case err := <-result:
+		if err != nil && !errors.Is(err, context.DeadlineExceeded) {
+			t.Fatalf("shutdown failed: %v", err)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("shutdown did not finish while cache sync was blocked")
 	}
 }
 

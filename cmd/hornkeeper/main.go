@@ -30,7 +30,11 @@ import (
 
 var version = "dev"
 
-const startupTimeout = 30 * time.Second
+const (
+	startupTimeout          = 30 * time.Second
+	gracefulShutdownTimeout = 20 * time.Second
+	processShutdownTimeout  = gracefulShutdownTimeout + 5*time.Second
+)
 
 func main() {
 	if err := run(); err != nil {
@@ -73,6 +77,30 @@ func run() error {
 		return err
 	}
 	ctx := ctrl.SetupSignalHandler()
+	return runWithShutdownTimeout(ctx, processShutdownTimeout, func() error {
+		return runController(ctx, cfg)
+	})
+}
+
+func runWithShutdownTimeout(ctx context.Context, timeout time.Duration, start func() error) error {
+	done := make(chan error, 1)
+	go func() { done <- start() }()
+	select {
+	case err := <-done:
+		return err
+	case <-ctx.Done():
+	}
+
+	// The manager's graceful shutdown timeout cannot help while startup is blocked.
+	select {
+	case err := <-done:
+		return err
+	case <-time.After(timeout):
+		return fmt.Errorf("controller shutdown exceeded %s: %w", timeout, context.DeadlineExceeded)
+	}
+}
+
+func runController(ctx context.Context, cfg config.Config) error {
 	apiConfig, err := ctrl.GetConfig()
 	if err != nil {
 		return fmt.Errorf("load Kubernetes configuration: %w", err)
@@ -141,7 +169,7 @@ func newManager(apiConfig *rest.Config, cfg config.Config) (ctrl.Manager, error)
 		LeaderElection:          cfg.LeaderElection,
 		LeaderElectionID:        "hornkeeper.noqer.com",
 		LeaderElectionNamespace: cfg.LeaderNamespace,
-		GracefulShutdownTimeout: new(20 * time.Second),
+		GracefulShutdownTimeout: new(gracefulShutdownTimeout),
 	})
 }
 
