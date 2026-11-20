@@ -1,0 +1,6 @@
+{{- /* Parse with Go's duration rules, including overflow and sub-nanosecond truncation. */ -}}
+{{- $epoch := mustToDate "2006-01-02T15:04:05Z07:00" "1970-01-01T00:00:00Z" -}}
+{{- $end := mustDateModify .Values.controller.resyncInterval $epoch -}}
+{{- if not ($end.After $epoch) -}}
+{{- fail "controller.resyncInterval must be at least 1ns" -}}
+{{- end -}}
