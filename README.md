@@ -138,7 +138,7 @@ Configuration is supplied through command-line flags:
 | `--resync-interval` | `1m` | Periodic retries for enabled claims, including invalid or pending claims |
 | `--leader-elect` | `true` | Elect a single active controller using a Lease |
 | `--leader-election-namespace` | `hornkeeper` | Namespace for Lease `hornkeeper.noqer.com` |
-| `--metrics-bind-address` | `:8080` | HTTP metrics address; `0` disables it |
+| `--metrics-bind-address` | `0` | HTTP metrics address; `0` disables it |
 | `--health-probe-bind-address` | `:8081` | HTTP health and readiness address |
 | `--dry-run` | `false` | Log intended volume changes without patching anything |
 | `--log-level` | `info` | `debug`, `info`, `warn` or `error` |
@@ -255,7 +255,7 @@ does not directly change readiness. Use reconciliation errors and logs to monito
 API failures. Readiness does not assert that every volume is healthy or every
 policy is valid.
 
-`/metrics` exposes Go/process and controller-runtime work queue/reconciliation
+When enabled, `/metrics` exposes Go/process and controller-runtime work queue/reconciliation
 metrics, plus:
 
 - `hornkeeper_reconciliations_total{result="ignored|enabled|error"}`.
@@ -264,8 +264,9 @@ metrics, plus:
 
 Metrics have no PVC/volume labels, avoiding per-volume cardinality. Invalid
 annotations are nonfatal and show up in field metrics and logs; alerts should include
-invalid fields as well as reconciliation errors. The example metrics Service is
-ClusterIP. Metrics/probe HTTP has no authentication; restrict network access to
+invalid fields as well as reconciliation errors. Metrics are disabled by default in
+the binary, chart and example deployment. Enabling `metrics.enabled` in the chart
+creates a ClusterIP Service on port 8080. Metrics/probe HTTP has no authentication; restrict network access to
 monitoring and the kubelet when your cluster policy requires it.
 
 ## Backup behavior and compatibility

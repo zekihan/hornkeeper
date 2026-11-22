@@ -36,7 +36,7 @@ namespace and `controller.longhornNamespace` must exist before installation;
 | `serviceAccount.create` | `true` | Create the controller ServiceAccount |
 | `serviceAccount.name` | `""` | Generated name; required when using an existing account |
 | `serviceAccount.annotations` | `{}` | ServiceAccount annotations |
-| `metrics.enabled` | `true` | Enable the metrics listener and ClusterIP Service on port 8080 |
+| `metrics.enabled` | `false` | Enable the metrics listener and ClusterIP Service on port 8080 |
 | `nameOverride`, `fullnameOverride` | `""` | Resource naming overrides |
 | `podAnnotations` | `{}` | Pod annotations |
 | `podSecurityContext`, `securityContext` | See `values.yaml` | Non-root, read-only, no capabilities, RuntimeDefault seccomp |
