@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"flag"
@@ -9,6 +10,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -229,10 +231,16 @@ func TestRunValidatesFlagsBeforeLoadingKubernetesConfig(t *testing.T) {
 		want string
 	}{
 		{"invalid log level", []string{"--log-level=verbose"}, "invalid log level"},
+		{"empty log level", []string{"--log-level="}, "invalid log level"},
 		{"invalid namespace", []string{"--longhorn-namespace=Invalid"}, "invalid Longhorn namespace"},
+		{"empty namespace", []string{"--longhorn-namespace="}, "invalid Longhorn namespace"},
 		{"invalid target", []string{"--default-backup-target="}, "invalid default backup target"},
+		{"malformed target", []string{"--default-backup-target=Bad_Name"}, "invalid default backup target"},
 		{"invalid replicas", []string{"--default-replicas=0"}, "invalid default replicas"},
+		{"negative replicas", []string{"--default-replicas=-1"}, "invalid default replicas"},
+		{"too many replicas", []string{"--default-replicas=21"}, "invalid default replicas"},
 		{"invalid interval", []string{"--resync-interval=0s"}, "resync interval must be positive"},
+		{"negative interval", []string{"--resync-interval=-1s"}, "resync interval must be positive"},
 		{"invalid leader namespace", []string{"--leader-election-namespace=Invalid"}, "invalid leader election namespace"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -267,5 +275,64 @@ func TestRunWithShutdownTimeout(t *testing.T) {
 	defer close(release)
 	if err := runWithShutdownTimeout(ctx, time.Millisecond, func() error { <-release; return nil }); !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("blocked shutdown error = %v, want deadline exceeded", err)
+	}
+}
+
+func TestRunVersionSkipsValidation(t *testing.T) {
+	originalFlags, originalArgs, originalStdout := flag.CommandLine, os.Args, os.Stdout
+	t.Cleanup(func() {
+		flag.CommandLine, os.Args, os.Stdout = originalFlags, originalArgs, originalStdout
+	})
+	reader, writer, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	os.Stdout = writer
+	flag.CommandLine = flag.NewFlagSet("hornkeeper", flag.ContinueOnError)
+	flag.CommandLine.SetOutput(io.Discard)
+	// Invalid replicas would fail validation if --version did not return first.
+	os.Args = []string{"hornkeeper", "--default-replicas=0", "--version"}
+	if err := run(); err != nil {
+		t.Fatal(err)
+	}
+	writer.Close()
+	os.Stdout = originalStdout
+	out, err := io.ReadAll(reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(out) != version+"\n" {
+		t.Fatalf("version output = %q, want %q", out, version+"\n")
+	}
+}
+
+func TestRunStopsWhenKubernetesConfigIsMissing(t *testing.T) {
+	t.Setenv("KUBECONFIG", filepath.Join(t.TempDir(), "missing"))
+	t.Setenv("KUBERNETES_SERVICE_HOST", "")
+	t.Setenv("KUBERNETES_SERVICE_PORT", "")
+	t.Setenv("KUBERNETES_MASTER", "")
+	if _, err := ctrl.GetConfig(); err == nil || !strings.Contains(err.Error(), "no configuration has been provided") {
+		t.Fatalf("preflight config error = %v, want an empty kubeconfig", err)
+	}
+	originalFlags, originalArgs, originalLogger := flag.CommandLine, os.Args, slog.Default()
+	t.Cleanup(func() {
+		flag.CommandLine, os.Args = originalFlags, originalArgs
+		slog.SetDefault(originalLogger)
+	})
+	var logs bytes.Buffer
+	slog.SetDefault(slog.New(slog.NewJSONHandler(&logs, nil)))
+	flag.CommandLine = flag.NewFlagSet("hornkeeper", flag.ContinueOnError)
+	flag.CommandLine.SetOutput(io.Discard)
+	// Election is off, so an invalid lease namespace must not fail closed.
+	os.Args = []string{"hornkeeper", "--leader-elect=false", "--leader-election-namespace=Invalid", "--log-level=debug"}
+	err := run()
+	if err == nil || !strings.Contains(err.Error(), "load Kubernetes configuration") {
+		t.Fatalf("run error = %v, want missing Kubernetes configuration", err)
+	}
+	if strings.Contains(err.Error(), "leader election") {
+		t.Fatalf("unused leader namespace was validated: %v", err)
+	}
+	if strings.Contains(logs.String(), "Starting hornkeeper") {
+		t.Fatalf("controller started without configuration: %s", logs.String())
 	}
 }
