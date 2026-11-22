@@ -1,15 +1,21 @@
 package controller
 
 import (
+	"bytes"
+	"context"
+	"errors"
+	"log/slog"
 	"reflect"
 	"testing"
 
+	"github.com/go-logr/logr"
 	"github.com/zekihan/hornkeeper/internal/config"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 	"sigs.k8s.io/controller-runtime/pkg/event"
 )
 
@@ -44,6 +50,13 @@ func TestVolumeChangePredicate(t *testing.T) {
 				t.Errorf("enqueue for volume update = %t, want %t", got, tc.want)
 			}
 		})
+	}
+	volume := Resource(VolumeGVK)
+	if volumeChanges.Update(event.UpdateEvent{ObjectOld: nil, ObjectNew: volume}) {
+		t.Fatal("untyped volume update enqueued a reconcile")
+	}
+	if volumeChanges.Update(event.UpdateEvent{ObjectOld: volume, ObjectNew: &corev1.PersistentVolume{}}) {
+		t.Fatal("non-volume update enqueued a reconcile")
 	}
 }
 
@@ -137,6 +150,67 @@ func TestOptInPredicate(t *testing.T) {
 	} {
 		if got := optIn.Update(event.UpdateEvent{ObjectOld: claim(tc.old), ObjectNew: claim(tc.new)}); got != tc.want {
 			t.Errorf("update %q -> %q = %t, want %t", tc.old, tc.new, got, tc.want)
+		}
+	}
+	if optIn.Delete(event.DeleteEvent{Object: claim("true")}) {
+		t.Fatal("claim deletion enqueued a reconcile")
+	}
+	if !optIn.Generic(event.GenericEvent{Object: claim("true")}) {
+		t.Fatal("enabled generic event was ignored")
+	}
+	if optIn.Generic(event.GenericEvent{Object: claim("false")}) {
+		t.Fatal("disabled generic event enqueued a reconcile")
+	}
+	if !optIn.Generic(event.GenericEvent{Object: claim("enabled")}) {
+		t.Fatal("unrecognized opt-in generic event was ignored")
+	}
+}
+
+func TestClaimAndVolumeIndexesSkipUnboundObjects(t *testing.T) {
+	if got := ClaimVolumeIndex(&corev1.PersistentVolumeClaim{}); got != nil {
+		t.Fatalf("unbound claim index = %v", got)
+	}
+	named := &corev1.PersistentVolumeClaim{Spec: corev1.PersistentVolumeClaimSpec{VolumeName: "pv"}}
+	if got := ClaimVolumeIndex(named); !reflect.DeepEqual(got, []string{"pv"}) {
+		t.Fatalf("bound claim index = %v", got)
+	}
+	for _, pv := range []*corev1.PersistentVolume{
+		{},
+		{Spec: corev1.PersistentVolumeSpec{PersistentVolumeSource: corev1.PersistentVolumeSource{CSI: &corev1.CSIPersistentVolumeSource{Driver: "other.driver", VolumeHandle: "vol"}}}},
+		{Spec: corev1.PersistentVolumeSpec{PersistentVolumeSource: corev1.PersistentVolumeSource{CSI: &corev1.CSIPersistentVolumeSource{Driver: LonghornDriver}}}},
+	} {
+		if got := VolumeHandleIndex(pv); got != nil {
+			t.Fatalf("index for %#v = %v", pv.Spec.CSI, got)
+		}
+	}
+	handled := &corev1.PersistentVolume{Spec: corev1.PersistentVolumeSpec{PersistentVolumeSource: corev1.PersistentVolumeSource{CSI: &corev1.CSIPersistentVolumeSource{Driver: LonghornDriver, VolumeHandle: "vol"}}}}
+	if got := VolumeHandleIndex(handled); !reflect.DeepEqual(got, []string{"vol"}) {
+		t.Fatalf("handle index = %v", got)
+	}
+}
+
+func TestEventMappingListErrorsEnqueueNothing(t *testing.T) {
+	f := newFixture(t)
+	f.r.Client = interceptor.NewClient(f.c, interceptor.Funcs{List: func(context.Context, client.WithWatch, client.ObjectList, ...client.ListOption) error {
+		return errors.New("index unavailable")
+	}})
+	var logs bytes.Buffer
+	ctx := ctrl.LoggerInto(t.Context(), logr.FromSlogHandler(slog.NewJSONHandler(&logs, nil)))
+	if got := f.r.ClaimsForPV(ctx, f.pv); len(got) != 0 {
+		t.Fatalf("PV map = %v", got)
+	}
+	if got := f.r.ClaimsForVolume(ctx, f.volume); len(got) != 0 {
+		t.Fatalf("volume map = %v", got)
+	}
+	target := Resource(BackupTargetGVK)
+	target.SetNamespace(f.r.Config.LonghornNamespace)
+	target.SetName("rustfs")
+	if got := f.r.ClaimsForTarget(ctx, target); len(got) != 0 {
+		t.Fatalf("target map = %v", got)
+	}
+	for _, msg := range []string{"Cannot map PV event to PVCs", "Cannot map Longhorn event to PVs", "Cannot map backup target event to PVCs"} {
+		if !bytes.Contains(logs.Bytes(), []byte(msg)) {
+			t.Errorf("log missing %q: %s", msg, logs.String())
 		}
 	}
 }
