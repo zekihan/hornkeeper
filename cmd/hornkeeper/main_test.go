@@ -5,6 +5,7 @@ import (
 	"errors"
 	"flag"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -218,5 +219,53 @@ func TestRunRejectsPositionalArguments(t *testing.T) {
 				t.Fatalf("run(%q) error = %v, want unexpected positional arguments", args, err)
 			}
 		})
+	}
+}
+
+func TestRunValidatesFlagsBeforeLoadingKubernetesConfig(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		args []string
+		want string
+	}{
+		{"invalid log level", []string{"--log-level=verbose"}, "invalid log level"},
+		{"invalid namespace", []string{"--longhorn-namespace=Invalid"}, "invalid Longhorn namespace"},
+		{"invalid target", []string{"--default-backup-target="}, "invalid default backup target"},
+		{"invalid replicas", []string{"--default-replicas=0"}, "invalid default replicas"},
+		{"invalid interval", []string{"--resync-interval=0s"}, "resync interval must be positive"},
+		{"invalid leader namespace", []string{"--leader-election-namespace=Invalid"}, "invalid leader election namespace"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			originalFlags, originalArgs, originalLogger := flag.CommandLine, os.Args, slog.Default()
+			t.Cleanup(func() {
+				flag.CommandLine, os.Args = originalFlags, originalArgs
+				slog.SetDefault(originalLogger)
+			})
+			flag.CommandLine = flag.NewFlagSet("hornkeeper", flag.ContinueOnError)
+			flag.CommandLine.SetOutput(io.Discard)
+			os.Args = append([]string{"hornkeeper"}, tc.args...)
+			if err := run(); err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("run(%q) error = %v, want %q", tc.args, err, tc.want)
+			}
+		})
+	}
+}
+
+func TestRunWithShutdownTimeout(t *testing.T) {
+	startErr := errors.New("startup failed")
+	if err := runWithShutdownTimeout(t.Context(), time.Second, func() error { return startErr }); !errors.Is(err, startErr) {
+		t.Fatalf("startup error = %v, want %v", err, startErr)
+	}
+
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	if err := runWithShutdownTimeout(ctx, time.Second, func() error { return startErr }); !errors.Is(err, startErr) {
+		t.Fatalf("shutdown error = %v, want %v", err, startErr)
+	}
+
+	release := make(chan struct{})
+	defer close(release)
+	if err := runWithShutdownTimeout(ctx, time.Millisecond, func() error { <-release; return nil }); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("blocked shutdown error = %v, want deadline exceeded", err)
 	}
 }
