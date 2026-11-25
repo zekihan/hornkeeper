@@ -9,14 +9,15 @@ import (
 	"testing"
 
 	"github.com/go-logr/logr"
-	"github.com/zekihan/hornkeeper/internal/config"
-	corev1 "k8s.io/api/core/v1"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
-	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 	"sigs.k8s.io/controller-runtime/pkg/event"
+
+	corev1 "k8s.io/api/core/v1"
+	ctrl "sigs.k8s.io/controller-runtime"
+
+	"github.com/zekihan/hornkeeper/internal/config"
 )
 
 func TestVolumeChangePredicate(t *testing.T) {
@@ -26,7 +27,7 @@ func TestVolumeChangePredicate(t *testing.T) {
 		want   bool
 	}{
 		{"detached", func(v *unstructured.Unstructured) {
-			v.Object["status"].(map[string]any)["state"] = "detached"
+			_ = unstructured.SetNestedField(v.Object, "detached", "status", "state")
 		}, true},
 		{"legacy clone restriction cleared", func(v *unstructured.Unstructured) {
 			v.SetLabels(nil)
@@ -35,7 +36,7 @@ func TestVolumeChangePredicate(t *testing.T) {
 			v.SetGeneration(2)
 		}, true},
 		{"unrelated status and label changes", func(v *unstructured.Unstructured) {
-			v.Object["status"].(map[string]any)["robustness"] = "degraded"
+			_ = unstructured.SetNestedField(v.Object, "degraded", "status", "robustness")
 			v.SetLabels(map[string]string{"longhorn.io/legacy-linked-clone": "true", "unrelated": "changed"})
 		}, false},
 	} {
@@ -46,7 +47,9 @@ func TestVolumeChangePredicate(t *testing.T) {
 			old.Object["status"] = map[string]any{"state": "attached", "robustness": "healthy"}
 			updated := old.DeepCopy()
 			tc.mutate(updated)
-			if got := volumeChanges.Update(event.UpdateEvent{ObjectOld: old, ObjectNew: updated}); got != tc.want {
+			if got := volumeChanges.Update(
+				event.UpdateEvent{ObjectOld: old, ObjectNew: updated},
+			); got != tc.want {
 				t.Errorf("enqueue for volume update = %t, want %t", got, tc.want)
 			}
 		})
@@ -55,7 +58,9 @@ func TestVolumeChangePredicate(t *testing.T) {
 	if volumeChanges.Update(event.UpdateEvent{ObjectOld: nil, ObjectNew: volume}) {
 		t.Fatal("untyped volume update enqueued a reconcile")
 	}
-	if volumeChanges.Update(event.UpdateEvent{ObjectOld: volume, ObjectNew: &corev1.PersistentVolume{}}) {
+	if volumeChanges.Update(
+		event.UpdateEvent{ObjectOld: volume, ObjectNew: &corev1.PersistentVolume{}},
+	) {
 		t.Fatal("non-volume update enqueued a reconcile")
 	}
 }
@@ -75,7 +80,9 @@ func TestClaimBackupTargetIndex(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			labels, annotations := splitMetadata(tc.labels)
-			pvc := &corev1.PersistentVolumeClaim{ObjectMeta: metav1.ObjectMeta{Labels: labels, Annotations: annotations}}
+			pvc := &corev1.PersistentVolumeClaim{
+				Labels: labels, Annotations: annotations,
+			}
 			if got := r.ClaimBackupTargetIndex(pvc); !reflect.DeepEqual(got, tc.want) {
 				t.Fatalf("index = %v, want %v", got, tc.want)
 			}
@@ -148,7 +155,9 @@ func TestOptInPredicate(t *testing.T) {
 		{"enabled", "yes", true},
 		{"enabled", "false", false},
 	} {
-		if got := optIn.Update(event.UpdateEvent{ObjectOld: claim(tc.old), ObjectNew: claim(tc.new)}); got != tc.want {
+		if got := optIn.Update(
+			event.UpdateEvent{ObjectOld: claim(tc.old), ObjectNew: claim(tc.new)},
+		); got != tc.want {
 			t.Errorf("update %q -> %q = %t, want %t", tc.old, tc.new, got, tc.want)
 		}
 	}
@@ -183,7 +192,13 @@ func TestClaimAndVolumeIndexesSkipUnboundObjects(t *testing.T) {
 			t.Fatalf("index for %#v = %v", pv.Spec.CSI, got)
 		}
 	}
-	handled := &corev1.PersistentVolume{Spec: corev1.PersistentVolumeSpec{PersistentVolumeSource: corev1.PersistentVolumeSource{CSI: &corev1.CSIPersistentVolumeSource{Driver: LonghornDriver, VolumeHandle: "vol"}}}}
+	handled := &corev1.PersistentVolume{
+		Spec: corev1.PersistentVolumeSpec{
+			PersistentVolumeSource: corev1.PersistentVolumeSource{
+				CSI: &corev1.CSIPersistentVolumeSource{Driver: LonghornDriver, VolumeHandle: "vol"},
+			},
+		},
+	}
 	if got := VolumeHandleIndex(handled); !reflect.DeepEqual(got, []string{"vol"}) {
 		t.Fatalf("handle index = %v", got)
 	}
@@ -191,9 +206,14 @@ func TestClaimAndVolumeIndexesSkipUnboundObjects(t *testing.T) {
 
 func TestEventMappingListErrorsEnqueueNothing(t *testing.T) {
 	f := newFixture(t)
-	f.r.Client = interceptor.NewClient(f.c, interceptor.Funcs{List: func(context.Context, client.WithWatch, client.ObjectList, ...client.ListOption) error {
-		return errors.New("index unavailable")
-	}})
+	f.r.Client = interceptor.NewClient(
+		f.c,
+		interceptor.Funcs{
+			List: func(context.Context, client.WithWatch, client.ObjectList, ...client.ListOption) error {
+				return errors.New("index unavailable")
+			},
+		},
+	)
 	var logs bytes.Buffer
 	ctx := ctrl.LoggerInto(t.Context(), logr.FromSlogHandler(slog.NewJSONHandler(&logs, nil)))
 	if got := f.r.ClaimsForPV(ctx, f.pv); len(got) != 0 {

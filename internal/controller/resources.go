@@ -5,11 +5,12 @@ import (
 	"errors"
 	"fmt"
 
-	apierrors "k8s.io/apimachinery/pkg/api/errors"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
-	"k8s.io/apimachinery/pkg/runtime/schema"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+
+	kerror "k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	kschema "k8s.io/apimachinery/pkg/runtime/schema"
 )
 
 const (
@@ -20,14 +21,29 @@ const (
 	LonghornDriver         = "driver.longhorn.io"
 	longhornGroup          = "longhorn.io"
 	legacyLinkedCloneLabel = "longhorn.io/legacy-linked-clone"
+
+	// Recognized values of the enabled label.
+	enabledLabelValue  = "true"
+	disabledLabelValue = "false"
+
+	// Longhorn sets the legacy-linked-clone label to "true" on linked clones.
+	legacyCloneValue = "true"
 )
 
 var (
-	VolumeGVK       = schema.GroupVersionKind{Group: longhornGroup, Version: "v1beta2", Kind: "Volume"}
-	BackupTargetGVK = schema.GroupVersionKind{Group: longhornGroup, Version: "v1beta2", Kind: "BackupTarget"}
+	VolumeGVK = kschema.GroupVersionKind{
+		Group:   longhornGroup,
+		Version: "v1beta2",
+		Kind:    "Volume",
+	}
+	BackupTargetGVK = kschema.GroupVersionKind{
+		Group:   longhornGroup,
+		Version: "v1beta2",
+		Kind:    "BackupTarget",
+	}
 )
 
-func Resource(gvk schema.GroupVersionKind) *unstructured.Unstructured {
+func Resource(gvk kschema.GroupVersionKind) *unstructured.Unstructured {
 	u := &unstructured.Unstructured{}
 	u.SetGroupVersionKind(gvk)
 	return u
@@ -35,8 +51,8 @@ func Resource(gvk schema.GroupVersionKind) *unstructured.Unstructured {
 
 func isLonghornObjectNotFound(err error, resource, name string) bool {
 	// The client attaches request details to 404s from unserved HTTP routes.
-	var status apierrors.APIStatus
-	if !errors.As(err, &status) || apierrors.IsUnexpectedServerError(err) {
+	var status kerror.APIStatus
+	if !errors.As(err, &status) || kerror.IsUnexpectedServerError(err) {
 		return false
 	}
 	response := status.Status()
@@ -47,7 +63,11 @@ func isLonghornObjectNotFound(err error, resource, name string) bool {
 
 func CheckBackupTarget(ctx context.Context, reader client.Reader, namespace, name string) error {
 	target := Resource(BackupTargetGVK)
-	if err := reader.Get(ctx, client.ObjectKey{Namespace: namespace, Name: name}, target); err != nil {
+	if err := reader.Get(
+		ctx,
+		client.ObjectKey{Namespace: namespace, Name: name},
+		target,
+	); err != nil {
 		return fmt.Errorf("get backup target %s/%s: %w", namespace, name, err)
 	}
 	if !target.GetDeletionTimestamp().IsZero() {

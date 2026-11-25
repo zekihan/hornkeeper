@@ -16,12 +16,14 @@ import (
 	"testing"
 	"time"
 
-	"github.com/zekihan/hornkeeper/internal/config"
 	"k8s.io/client-go/rest"
-	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/cache"
 	"sigs.k8s.io/controller-runtime/pkg/healthz"
+
+	ctrl "sigs.k8s.io/controller-runtime"
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
+
+	"github.com/zekihan/hornkeeper/internal/config"
 )
 
 type roundTripFunc func(*http.Request) (*http.Response, error)
@@ -36,8 +38,15 @@ func TestStartupDiscoveryHasDeadline(t *testing.T) {
 			if req.URL.Path != "/api" {
 				t.Errorf("request path = %q, want /api discovery", req.URL.Path)
 			}
-			if deadline, ok := req.Context().Deadline(); !ok || time.Until(deadline) > startupTimeout {
-				t.Errorf("discovery must have a request deadline within %s, got %v (set: %v)", startupTimeout, deadline, ok)
+			if deadline, ok := req.Context().
+				Deadline(); !ok ||
+				time.Until(deadline) > startupTimeout {
+				t.Errorf(
+					"discovery must have a request deadline within %s, got %v (set: %v)",
+					startupTimeout,
+					deadline,
+					ok,
+				)
 			}
 			return nil, stop
 		}),
@@ -45,13 +54,14 @@ func TestStartupDiscoveryHasDeadline(t *testing.T) {
 	cfg := config.Default()
 	cfg.LeaderElection = false
 	cfg.HealthAddress = "0"
-	if _, err := newManager(apiConfig, cfg); !errors.Is(err, stop) {
+	if _, err := newManager(apiConfig, &cfg); !errors.Is(err, stop) {
 		t.Fatalf("create manager = %v, want discovery transport error", err)
 	}
 }
 
 type blockedCacheSync struct {
 	cache.Cache
+
 	waiting chan struct{}
 	release chan struct{}
 }
@@ -124,6 +134,7 @@ func TestShutdownWhileCacheSyncIsBlocked(t *testing.T) {
 
 type readinessCache struct {
 	cache.Cache
+
 	syncResult   bool
 	synchronized chan struct{}
 }
@@ -137,7 +148,10 @@ func (c readinessCache) WaitForCacheSync(context.Context) bool {
 // An unavailable API must not turn probes into API calls or block them.
 func TestReadinessHTTPIsLocal(t *testing.T) {
 	r := &cacheReady{}
-	handler := http.StripPrefix("/readyz", &healthz.Handler{Checks: map[string]healthz.Checker{"cache": r.Check}})
+	handler := http.StripPrefix(
+		"/readyz",
+		&healthz.Handler{Checks: map[string]healthz.Checker{"cache": r.Check}},
+	)
 	for _, synced := range []bool{false, true, false} {
 		r.synced.Store(synced)
 		for range 10 {
@@ -156,6 +170,9 @@ func TestReadinessHTTPIsLocal(t *testing.T) {
 }
 
 func TestReadinessAndShutdown(t *testing.T) {
+	ticker := time.NewTicker(time.Millisecond)
+	defer ticker.Stop()
+
 	for _, synced := range []bool{false, true} {
 		c := readinessCache{syncResult: synced, synchronized: make(chan struct{})}
 		r := &cacheReady{cache: c}
@@ -176,8 +193,6 @@ func TestReadinessAndShutdown(t *testing.T) {
 		// For the successful path, wait for the readiness publication in Start.
 		if synced {
 			deadline := time.After(time.Second)
-			ticker := time.NewTicker(time.Millisecond)
-			defer ticker.Stop()
 			for !r.synced.Load() {
 				select {
 				case <-deadline:
@@ -217,7 +232,8 @@ func TestRunRejectsPositionalArguments(t *testing.T) {
 			flag.CommandLine = flag.NewFlagSet("hornkeeper", flag.ContinueOnError)
 			flag.CommandLine.SetOutput(io.Discard)
 			os.Args = append([]string{"hornkeeper"}, args...)
-			if err := run(); err == nil || !strings.Contains(err.Error(), "unexpected positional arguments") {
+			if err := run(); err == nil ||
+				!strings.Contains(err.Error(), "unexpected positional arguments") {
 				t.Fatalf("run(%q) error = %v, want unexpected positional arguments", args, err)
 			}
 		})
@@ -261,19 +277,40 @@ func TestRunValidatesFlagsBeforeLoadingKubernetesConfig(t *testing.T) {
 
 func TestRunWithShutdownTimeout(t *testing.T) {
 	startErr := errors.New("startup failed")
-	if err := runWithShutdownTimeout(t.Context(), time.Second, func() error { return startErr }); !errors.Is(err, startErr) {
+	if err := runWithShutdownTimeout(
+		t.Context(),
+		time.Second,
+		func() error { return startErr },
+	); !errors.Is(
+		err,
+		startErr,
+	) {
 		t.Fatalf("startup error = %v, want %v", err, startErr)
 	}
 
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
-	if err := runWithShutdownTimeout(ctx, time.Second, func() error { return startErr }); !errors.Is(err, startErr) {
+	if err := runWithShutdownTimeout(
+		ctx,
+		time.Second,
+		func() error { return startErr },
+	); !errors.Is(
+		err,
+		startErr,
+	) {
 		t.Fatalf("shutdown error = %v, want %v", err, startErr)
 	}
 
 	release := make(chan struct{})
 	defer close(release)
-	if err := runWithShutdownTimeout(ctx, time.Millisecond, func() error { <-release; return nil }); !errors.Is(err, context.DeadlineExceeded) {
+	if err := runWithShutdownTimeout(
+		ctx,
+		time.Millisecond,
+		func() error { <-release; return nil },
+	); !errors.Is(
+		err,
+		context.DeadlineExceeded,
+	) {
 		t.Fatalf("blocked shutdown error = %v, want deadline exceeded", err)
 	}
 }
@@ -295,7 +332,7 @@ func TestRunVersionSkipsValidation(t *testing.T) {
 	if err := run(); err != nil {
 		t.Fatal(err)
 	}
-	writer.Close()
+	_ = writer.Close()
 	os.Stdout = originalStdout
 	out, err := io.ReadAll(reader)
 	if err != nil {
@@ -311,7 +348,8 @@ func TestRunStopsWhenKubernetesConfigIsMissing(t *testing.T) {
 	t.Setenv("KUBERNETES_SERVICE_HOST", "")
 	t.Setenv("KUBERNETES_SERVICE_PORT", "")
 	t.Setenv("KUBERNETES_MASTER", "")
-	if _, err := ctrl.GetConfig(); err == nil || !strings.Contains(err.Error(), "no configuration has been provided") {
+	if _, err := ctrl.GetConfig(); err == nil ||
+		!strings.Contains(err.Error(), "no configuration has been provided") {
 		t.Fatalf("preflight config error = %v, want an empty kubeconfig", err)
 	}
 	originalFlags, originalArgs, originalLogger := flag.CommandLine, os.Args, slog.Default()
@@ -324,7 +362,12 @@ func TestRunStopsWhenKubernetesConfigIsMissing(t *testing.T) {
 	flag.CommandLine = flag.NewFlagSet("hornkeeper", flag.ContinueOnError)
 	flag.CommandLine.SetOutput(io.Discard)
 	// Election is off, so an invalid lease namespace must not fail closed.
-	os.Args = []string{"hornkeeper", "--leader-elect=false", "--leader-election-namespace=Invalid", "--log-level=debug"}
+	os.Args = []string{
+		"hornkeeper",
+		"--leader-elect=false",
+		"--leader-election-namespace=Invalid",
+		"--log-level=debug",
+	}
 	err := run()
 	if err == nil || !strings.Contains(err.Error(), "load Kubernetes configuration") {
 		t.Fatalf("run error = %v, want missing Kubernetes configuration", err)

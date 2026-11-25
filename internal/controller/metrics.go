@@ -8,7 +8,7 @@ type Metrics struct {
 }
 
 func NewMetrics(reg prometheus.Registerer) *Metrics {
-	m := &Metrics{
+	mtr := &Metrics{
 		Reconciles: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "hornkeeper_reconciliations_total",
 			Help: "PVC reconciliations by result (ignored, enabled, error).",
@@ -18,6 +18,6 @@ func NewMetrics(reg prometheus.Registerer) *Metrics {
 			Help: "Field reconciliations by field and result (patched, dry-run, unchanged, invalid, waiting, unmanaged, error).",
 		}, []string{"field", "result"}),
 	}
-	reg.MustRegister(m.Reconciles, m.Fields)
-	return m
+	reg.MustRegister(mtr.Reconciles, mtr.Fields)
+	return mtr
 }

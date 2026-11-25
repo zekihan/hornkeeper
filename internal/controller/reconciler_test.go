@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"maps"
 	"net/http"
 	"reflect"
 	"slices"
@@ -16,18 +17,18 @@ import (
 	"github.com/go-logr/logr"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/testutil"
-	"github.com/zekihan/hornkeeper/internal/config"
-	corev1 "k8s.io/api/core/v1"
-	apierrors "k8s.io/apimachinery/pkg/api/errors"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
-	"k8s.io/apimachinery/pkg/runtime/schema"
-	"k8s.io/apimachinery/pkg/types"
-	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
+
+	corev1 "k8s.io/api/core/v1"
+	kerror "k8s.io/apimachinery/pkg/api/errors"
+	kschema "k8s.io/apimachinery/pkg/runtime/schema"
+	ctrl "sigs.k8s.io/controller-runtime"
+
+	"github.com/zekihan/hornkeeper/internal/config"
 )
 
 type fixture struct {
@@ -50,15 +51,27 @@ func newFixture(t *testing.T) *fixture {
 	cfg.Replicas = 2
 	f := &fixture{r: &Reconciler{Config: cfg, Metrics: NewMetrics(prometheus.NewRegistry())}}
 	f.pvc = &corev1.PersistentVolumeClaim{
-		ObjectMeta: metav1.ObjectMeta{Name: "claim", Namespace: "app", UID: "claim-uid", Labels: map[string]string{EnabledLabel: "true"}},
-		Spec:       corev1.PersistentVolumeClaimSpec{VolumeName: "pv"},
-		Status:     corev1.PersistentVolumeClaimStatus{Phase: corev1.ClaimBound},
+		Name:      "claim",
+		Namespace: "app",
+		UID:       "claim-uid",
+		Labels:    map[string]string{EnabledLabel: "true"},
+		Spec:      corev1.PersistentVolumeClaimSpec{VolumeName: "pv"},
+		Status:    corev1.PersistentVolumeClaimStatus{Phase: corev1.ClaimBound},
 	}
 	f.pv = &corev1.PersistentVolume{
-		ObjectMeta: metav1.ObjectMeta{Name: "pv"},
+		Name: "pv",
 		Spec: corev1.PersistentVolumeSpec{
-			ClaimRef:               &corev1.ObjectReference{Namespace: "app", Name: "claim", UID: "claim-uid"},
-			PersistentVolumeSource: corev1.PersistentVolumeSource{CSI: &corev1.CSIPersistentVolumeSource{Driver: LonghornDriver, VolumeHandle: "restored-volume"}},
+			ClaimRef: &corev1.ObjectReference{
+				Namespace: "app",
+				Name:      "claim",
+				UID:       "claim-uid",
+			},
+			PersistentVolumeSource: corev1.PersistentVolumeSource{
+				CSI: &corev1.CSIPersistentVolumeSource{
+					Driver:       LonghornDriver,
+					VolumeHandle: "restored-volume",
+				},
+			},
 		},
 		Status: corev1.PersistentVolumeStatus{Phase: corev1.VolumeBound},
 	}
@@ -68,8 +81,13 @@ func newFixture(t *testing.T) *fixture {
 	f.volume.SetUID("volume-uid")
 	f.volume.SetLabels(map[string]string{"keep": "this"})
 	f.volume.Object["spec"] = map[string]any{
-		"backupTargetName": "default", "numberOfReplicas": int64(1), "dataLocality": "disabled",
-		"size": "1073741824", "nodeID": "node-a", "fromBackup": "s3://old-backup", "encrypted": true,
+		"backupTargetName": "default",
+		"numberOfReplicas": int64(1),
+		"dataLocality":     "disabled",
+		"size":             "1073741824",
+		"nodeID":           "node-a",
+		"fromBackup":       "s3://old-backup",
+		"encrypted":        true,
 	}
 	f.volume.Object["status"] = map[string]any{"state": "attached", "robustness": "healthy"}
 	defaultTarget, rustfsTarget := Resource(BackupTargetGVK), Resource(BackupTargetGVK)
@@ -98,7 +116,10 @@ func newFixture(t *testing.T) *fixture {
 				t.Fatalf("patch must own exactly one field: %s", data)
 			}
 			for key := range spec {
-				if !slices.ContainsFunc(volumeFields, func(f volumeField) bool { return f.name == key }) {
+				if !slices.ContainsFunc(
+					volumeFields,
+					func(f volumeField) bool { return f.name == key },
+				) {
 					t.Fatalf("unowned field %q", key)
 				}
 			}
@@ -110,7 +131,8 @@ func newFixture(t *testing.T) *fixture {
 				t.Fatalf("unexpected patch content: %s", data)
 			}
 			return c.Patch(ctx, obj, patch, opts...)
-		}}).Build()
+		}}).
+		Build()
 	f.r.Client = f.c
 	f.r.Reader = f.c
 	return f
@@ -118,7 +140,10 @@ func newFixture(t *testing.T) *fixture {
 
 func (f *fixture) reconcile(t *testing.T) ctrl.Result {
 	t.Helper()
-	result, err := f.r.Reconcile(t.Context(), ctrl.Request{NamespacedName: client.ObjectKeyFromObject(f.pvc)})
+	result, err := f.r.Reconcile(
+		t.Context(),
+		ctrl.Request{NamespacedName: client.ObjectKeyFromObject(f.pvc)},
+	)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -126,7 +151,9 @@ func (f *fixture) reconcile(t *testing.T) ctrl.Result {
 }
 
 // splitMetadata places the opt-in key in labels and every setting in annotations.
-func splitMetadata(keys map[string]string) (labels, annotations map[string]string) {
+func splitMetadata(keys map[string]string) (map[string]string, map[string]string) {
+	var labels, annotations map[string]string
+
 	for k, v := range keys {
 		if k == EnabledLabel {
 			labels = map[string]string{k: v}
@@ -151,6 +178,7 @@ func (f *fixture) metadata(t *testing.T, keys map[string]string) {
 		t.Fatal(err)
 	}
 }
+
 func (f *fixture) getVolume(t *testing.T) *unstructured.Unstructured {
 	t.Helper()
 	v := Resource(VolumeGVK)
@@ -159,6 +187,7 @@ func (f *fixture) getVolume(t *testing.T) *unstructured.Unstructured {
 	}
 	return v
 }
+
 func (f *fixture) settings(t *testing.T, target string, replicas int64) {
 	t.Helper()
 	v := f.getVolume(t)
@@ -171,7 +200,13 @@ func (f *fixture) settings(t *testing.T, target string, replicas int64) {
 		t.Fatal(err)
 	}
 	if actualTarget != target || actualReplicas != replicas {
-		t.Fatalf("got target=%q replicas=%d, want %q %d", actualTarget, actualReplicas, target, replicas)
+		t.Fatalf(
+			"got target=%q replicas=%d, want %q %d",
+			actualTarget,
+			actualReplicas,
+			target,
+			replicas,
+		)
 	}
 }
 
@@ -184,15 +219,26 @@ func TestOptIn(t *testing.T) {
 				labels[EnabledLabel] = value
 			}
 			f.metadata(t, labels)
-			f.r.Reader = interceptor.NewClient(f.c, interceptor.Funcs{Get: func(ctx context.Context, c client.WithWatch, key client.ObjectKey, obj client.Object, opts ...client.GetOption) error {
-				if _, ok := obj.(*corev1.PersistentVolumeClaim); !ok {
-					t.Fatal("disabled claim must not read PV or Longhorn objects")
-				}
-				return c.Get(ctx, key, obj, opts...)
-			}})
+			f.r.Reader = interceptor.NewClient(
+				f.c,
+				interceptor.Funcs{
+					Get: func(ctx context.Context, c client.WithWatch, key client.ObjectKey, obj client.Object, opts ...client.GetOption) error {
+						if _, ok := obj.(*corev1.PersistentVolumeClaim); !ok {
+							t.Fatal("disabled claim must not read PV or Longhorn objects")
+						}
+						return c.Get(ctx, key, obj, opts...)
+					},
+				},
+			)
 			var logs bytes.Buffer
-			ctx := ctrl.LoggerInto(t.Context(), logr.FromSlogHandler(slog.NewJSONHandler(&logs, nil)))
-			result, err := f.r.Reconcile(ctx, ctrl.Request{NamespacedName: client.ObjectKeyFromObject(f.pvc)})
+			ctx := ctrl.LoggerInto(
+				t.Context(),
+				logr.FromSlogHandler(slog.NewJSONHandler(&logs, nil)),
+			)
+			result, err := f.r.Reconcile(
+				ctx,
+				ctrl.Request{NamespacedName: client.ObjectKeyFromObject(f.pvc)},
+			)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -204,7 +250,10 @@ func TestOptIn(t *testing.T) {
 				t.Fatal("disabled PVC was patched")
 			}
 			wantWarning := value != "" && value != "false"
-			if gotWarning := strings.Contains(logs.String(), `"level":"WARN"`); gotWarning != wantWarning {
+			if gotWarning := strings.Contains(
+				logs.String(),
+				`"level":"WARN"`,
+			); gotWarning != wantWarning {
 				t.Fatalf("warning logged = %t, want %t: %s", gotWarning, wantWarning, logs.String())
 			}
 		})
@@ -217,7 +266,12 @@ func TestSettingsAsLabelsAreIgnored(t *testing.T) {
 	if err := f.c.Get(t.Context(), client.ObjectKeyFromObject(f.pvc), pvc); err != nil {
 		t.Fatal(err)
 	}
-	pvc.Labels = map[string]string{EnabledLabel: "true", BackupTargetAnnotation: "default", ReplicasAnnotation: "3", SnapshotMaxCountAnnotation: "100"}
+	pvc.Labels = map[string]string{
+		EnabledLabel:               "true",
+		BackupTargetAnnotation:     "default",
+		ReplicasAnnotation:         "3",
+		SnapshotMaxCountAnnotation: "100",
+	}
 	if err := f.c.Update(t.Context(), pvc); err != nil {
 		t.Fatal(err)
 	}
@@ -240,7 +294,14 @@ func TestDefaultsOverridesRemovalDisablingAndDrift(t *testing.T) {
 	if f.patches != patched {
 		t.Fatal("no-op reconcile wrote a patch")
 	}
-	f.metadata(t, map[string]string{EnabledLabel: "true", BackupTargetAnnotation: "default", ReplicasAnnotation: "3"})
+	f.metadata(
+		t,
+		map[string]string{
+			EnabledLabel:           "true",
+			BackupTargetAnnotation: "default",
+			ReplicasAnnotation:     "3",
+		},
+	)
 	f.reconcile(t)
 	f.settings(t, "default", 3)
 	f.metadata(t, map[string]string{EnabledLabel: "true", ReplicasAnnotation: "3"})
@@ -250,14 +311,14 @@ func TestDefaultsOverridesRemovalDisablingAndDrift(t *testing.T) {
 	f.reconcile(t)
 	f.settings(t, "rustfs", 2)
 	v := f.getVolume(t)
-	v.Object["spec"].(map[string]any)["numberOfReplicas"] = int64(4)
-	v.Object["spec"].(map[string]any)["backupTargetName"] = "default"
+	_ = unstructured.SetNestedField(v.Object, int64(4), "spec", "numberOfReplicas")
+	_ = unstructured.SetNestedField(v.Object, "default", "spec", "backupTargetName")
 	if err := f.c.Update(t.Context(), v); err != nil {
 		t.Fatal(err)
 	}
 	// A fresh Reconciler has no previous-process state but still corrects drift.
-	copy := *f.r
-	f.r = &copy
+	reconcilerCopy := *f.r
+	f.r = &reconcilerCopy
 	f.reconcile(t)
 	f.settings(t, "rustfs", 2)
 	for _, labels := range []map[string]string{{EnabledLabel: "false", ReplicasAnnotation: "5"}, {ReplicasAnnotation: "5"}} {
@@ -305,16 +366,14 @@ func TestInvalidFieldsAreIndependent(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			f := newFixture(t)
 			labels := map[string]string{EnabledLabel: "true"}
-			for k, v := range tc.labels {
-				labels[k] = v
-			}
+			maps.Copy(labels, tc.labels)
 			f.metadata(t, labels)
 			v := f.getVolume(t)
 			if tc.locality != "" {
-				unstructured.SetNestedField(v.Object, tc.locality, "spec", "dataLocality")
+				_ = unstructured.SetNestedField(v.Object, tc.locality, "spec", "dataLocality")
 			}
 			if tc.layout != "" {
-				unstructured.SetNestedField(v.Object, tc.layout, "spec", "dataLayout", "type")
+				_ = unstructured.SetNestedField(v.Object, tc.layout, "spec", "dataLayout", "type")
 			}
 			if err := f.c.Update(t.Context(), v); err != nil {
 				t.Fatal(err)
@@ -379,7 +438,11 @@ func TestBindingAndVolumeResolution(t *testing.T) {
 			if err := f.c.Get(t.Context(), client.ObjectKeyFromObject(decoy), decoy); err != nil {
 				t.Fatal(err)
 			}
-			if n, _, _ := unstructured.NestedInt64(decoy.Object, "spec", "numberOfReplicas"); n != 1 {
+			if n, _, _ := unstructured.NestedInt64(
+				decoy.Object,
+				"spec",
+				"numberOfReplicas",
+			); n != 1 {
 				t.Fatal("modified UID-derived decoy")
 			}
 		})
@@ -402,20 +465,25 @@ func TestBackupTargetPatchRechecksPVBinding(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			f := newFixture(t)
 			changed := false
-			f.r.Reader = interceptor.NewClient(f.c, interceptor.Funcs{Get: func(ctx context.Context, c client.WithWatch, key client.ObjectKey, obj client.Object, opts ...client.GetOption) error {
-				if err := c.Get(ctx, key, obj, opts...); err != nil {
-					return err
-				}
-				if changed || obj.GetObjectKind().GroupVersionKind() != BackupTargetGVK {
-					return nil
-				}
-				pv := &corev1.PersistentVolume{}
-				if err := c.Get(ctx, client.ObjectKeyFromObject(f.pv), pv); err != nil {
-					return err
-				}
-				changed = true
-				return tc.change(ctx, c, pv)
-			}})
+			f.r.Reader = interceptor.NewClient(
+				f.c,
+				interceptor.Funcs{
+					Get: func(ctx context.Context, c client.WithWatch, key client.ObjectKey, obj client.Object, opts ...client.GetOption) error {
+						if err := c.Get(ctx, key, obj, opts...); err != nil {
+							return err
+						}
+						if changed || obj.GetObjectKind().GroupVersionKind() != BackupTargetGVK {
+							return nil
+						}
+						pv := &corev1.PersistentVolume{}
+						if err := c.Get(ctx, client.ObjectKeyFromObject(f.pv), pv); err != nil {
+							return err
+						}
+						changed = true
+						return tc.change(ctx, c, pv)
+					},
+				},
+			)
 			f.reconcile(t)
 			if !changed {
 				t.Fatal("backup target lookup did not change the PV")
@@ -431,13 +499,13 @@ func TestBackupTargetPatchRechecksPVBinding(t *testing.T) {
 func TestPendingClaimLaterBinds(t *testing.T) {
 	f := newFixture(t)
 	pvc := &corev1.PersistentVolumeClaim{}
-	f.c.Get(t.Context(), client.ObjectKeyFromObject(f.pvc), pvc)
+	_ = f.c.Get(t.Context(), client.ObjectKeyFromObject(f.pvc), pvc)
 	pvc.Status.Phase = corev1.ClaimPending
-	f.c.Status().Update(t.Context(), pvc)
+	_ = f.c.Status().Update(t.Context(), pvc)
 	f.reconcile(t)
 	f.settings(t, "default", 1)
 	pvc.Status.Phase = corev1.ClaimBound
-	f.c.Status().Update(t.Context(), pvc)
+	_ = f.c.Status().Update(t.Context(), pvc)
 	f.reconcile(t)
 	f.settings(t, "rustfs", 2)
 }
@@ -447,21 +515,35 @@ func TestConflictRechecksOptInAndPreservesConcurrentFields(t *testing.T) {
 		t.Run(fmt.Sprintf("disable=%v", disable), func(t *testing.T) {
 			f := newFixture(t)
 			attempts := 0
-			f.r.Client = interceptor.NewClient(f.c, interceptor.Funcs{Patch: func(ctx context.Context, c client.WithWatch, obj client.Object, patch client.Patch, opts ...client.PatchOption) error {
-				attempts++
-				if attempts == 1 {
-					current := f.getVolume(t)
-					unstructured.SetNestedField(current.Object, "concurrent-node", "spec", "nodeID")
-					if err := c.Update(ctx, current); err != nil {
-						return err
-					}
-					if disable {
-						f.metadata(t, map[string]string{EnabledLabel: "false"})
-					}
-					return apierrors.NewConflict(schema.GroupResource{Group: "longhorn.io", Resource: "volumes"}, obj.GetName(), fmt.Errorf("injected conflict"))
-				}
-				return c.Patch(ctx, obj, patch, opts...)
-			}})
+			f.r.Client = interceptor.NewClient(
+				f.c,
+				interceptor.Funcs{
+					Patch: func(ctx context.Context, c client.WithWatch, obj client.Object, patch client.Patch, opts ...client.PatchOption) error {
+						attempts++
+						if attempts == 1 {
+							current := f.getVolume(t)
+							_ = unstructured.SetNestedField(
+								current.Object,
+								"concurrent-node",
+								"spec",
+								"nodeID",
+							)
+							if err := c.Update(ctx, current); err != nil {
+								return err
+							}
+							if disable {
+								f.metadata(t, map[string]string{EnabledLabel: "false"})
+							}
+							return kerror.NewConflict(
+								kschema.GroupResource{Group: "longhorn.io", Resource: "volumes"},
+								obj.GetName(),
+								errors.New("injected conflict"),
+							)
+						}
+						return c.Patch(ctx, obj, patch, opts...)
+					},
+				},
+			)
 			f.reconcile(t)
 			if disable {
 				f.settings(t, "default", 1)
@@ -474,7 +556,11 @@ func TestConflictRechecksOptInAndPreservesConcurrentFields(t *testing.T) {
 					t.Fatalf("expected conflict and two successful fields, got %d", attempts)
 				}
 			}
-			if node, _, _ := unstructured.NestedString(f.getVolume(t).Object, "spec", "nodeID"); node != "concurrent-node" {
+			if node, _, _ := unstructured.NestedString(
+				f.getVolume(t).Object,
+				"spec",
+				"nodeID",
+			); node != "concurrent-node" {
 				t.Fatal("concurrent unrelated field lost")
 			}
 		})
@@ -483,19 +569,31 @@ func TestConflictRechecksOptInAndPreservesConcurrentFields(t *testing.T) {
 
 func TestPatchRejectionDoesNotBlockOtherField(t *testing.T) {
 	f := newFixture(t)
-	f.r.Client = interceptor.NewClient(f.c, interceptor.Funcs{Patch: func(ctx context.Context, c client.WithWatch, obj client.Object, patch client.Patch, opts ...client.PatchOption) error {
-		body, err := patch.Data(obj)
-		if err != nil {
-			return err
-		}
-		var data map[string]any
-		json.Unmarshal(body, &data)
-		if _, ok := data["spec"].(map[string]any)["backupTargetName"]; ok {
-			return apierrors.NewForbidden(schema.GroupResource{Group: "longhorn.io", Resource: "volumes"}, obj.GetName(), fmt.Errorf("admission rejected field"))
-		}
-		return c.Patch(ctx, obj, patch, opts...)
-	}})
-	_, err := f.r.Reconcile(t.Context(), ctrl.Request{NamespacedName: client.ObjectKeyFromObject(f.pvc)})
+	f.r.Client = interceptor.NewClient(
+		f.c,
+		interceptor.Funcs{
+			Patch: func(ctx context.Context, c client.WithWatch, obj client.Object, patch client.Patch, opts ...client.PatchOption) error {
+				body, err := patch.Data(obj)
+				if err != nil {
+					return err
+				}
+				var data map[string]any
+				_ = json.Unmarshal(body, &data)
+				if _, ok := data["spec"].(map[string]any)["backupTargetName"]; ok {
+					return kerror.NewForbidden(
+						kschema.GroupResource{Group: "longhorn.io", Resource: "volumes"},
+						obj.GetName(),
+						errors.New("admission rejected field"),
+					)
+				}
+				return c.Patch(ctx, obj, patch, opts...)
+			},
+		},
+	)
+	_, err := f.r.Reconcile(
+		t.Context(),
+		ctrl.Request{NamespacedName: client.ObjectKeyFromObject(f.pvc)},
+	)
 	if err == nil {
 		t.Fatal("patch rejection must trigger retry")
 	}
@@ -505,12 +603,24 @@ func TestPatchRejectionDoesNotBlockOtherField(t *testing.T) {
 func TestRetryExhaustion(t *testing.T) {
 	f := newFixture(t)
 	attempts := 0
-	f.r.Client = interceptor.NewClient(f.c, interceptor.Funcs{Patch: func(ctx context.Context, c client.WithWatch, obj client.Object, patch client.Patch, opts ...client.PatchOption) error {
-		attempts++
-		return apierrors.NewConflict(schema.GroupResource{Group: "longhorn.io", Resource: "volumes"}, obj.GetName(), fmt.Errorf("conflict"))
-	}})
-	_, err := f.r.Reconcile(t.Context(), ctrl.Request{NamespacedName: client.ObjectKeyFromObject(f.pvc)})
-	if !apierrors.IsConflict(err) {
+	f.r.Client = interceptor.NewClient(
+		f.c,
+		interceptor.Funcs{
+			Patch: func(ctx context.Context, c client.WithWatch, obj client.Object, patch client.Patch, opts ...client.PatchOption) error {
+				attempts++
+				return kerror.NewConflict(
+					kschema.GroupResource{Group: "longhorn.io", Resource: "volumes"},
+					obj.GetName(),
+					errors.New("conflict"),
+				)
+			},
+		},
+	)
+	_, err := f.r.Reconcile(
+		t.Context(),
+		ctrl.Request{NamespacedName: client.ObjectKeyFromObject(f.pvc)},
+	)
+	if !kerror.IsConflict(err) {
 		t.Fatalf("expected retryable conflict, got %v", err)
 	}
 	if attempts < 4 {
@@ -521,7 +631,7 @@ func TestRetryExhaustion(t *testing.T) {
 
 func TestLonghornNotFoundClassification(t *testing.T) {
 	for _, lookup := range []struct {
-		gvk           schema.GroupVersionKind
+		gvk           kschema.GroupVersionKind
 		resource      string
 		objectName    string
 		field         string
@@ -531,39 +641,61 @@ func TestLonghornNotFoundClassification(t *testing.T) {
 		{BackupTargetGVK, "backuptargets", "rustfs", "backupTargetName", "invalid", 2},
 		{VolumeGVK, "volumes", "restored-volume", "numberOfReplicas", "waiting", 1},
 	} {
-		resource := schema.GroupResource{Group: lookup.gvk.Group, Resource: lookup.resource}
+		resource := kschema.GroupResource{Group: lookup.gvk.Group, Resource: lookup.resource}
 		for _, tc := range []struct {
 			name       string
 			readErr    error
 			wantResult string
 		}{
-			{"missing object", apierrors.NewNotFound(resource, lookup.objectName), lookup.missingResult},
-			{"unserved API", apierrors.NewGenericServerResponse(http.StatusNotFound, http.MethodGet, schema.GroupResource{}, "", "", 0, false), "error"},
-			{"unexpected HTTP 404", apierrors.NewGenericServerResponse(http.StatusNotFound, http.MethodGet, resource, lookup.objectName, "Not Found", 0, true), "error"},
+			{"missing object", kerror.NewNotFound(resource, lookup.objectName), lookup.missingResult},
+			{"unserved API", kerror.NewGenericServerResponse(http.StatusNotFound, http.MethodGet, kschema.GroupResource{}, "", "", 0, false), "error"},
+			{"unexpected HTTP 404", kerror.NewGenericServerResponse(http.StatusNotFound, http.MethodGet, resource, lookup.objectName, "Not Found", 0, true), "error"},
 		} {
 			t.Run(lookup.gvk.Kind+"/"+tc.name, func(t *testing.T) {
 				f := newFixture(t)
-				f.r.Reader = interceptor.NewClient(f.c, interceptor.Funcs{Get: func(ctx context.Context, c client.WithWatch, key client.ObjectKey, obj client.Object, opts ...client.GetOption) error {
-					if obj.GetObjectKind().GroupVersionKind() == lookup.gvk && key.Name == lookup.objectName {
-						return tc.readErr
-					}
-					return c.Get(ctx, key, obj, opts...)
-				}})
-				result, err := f.r.Reconcile(t.Context(), ctrl.Request{NamespacedName: client.ObjectKeyFromObject(f.pvc)})
+				f.r.Reader = interceptor.NewClient(
+					f.c,
+					interceptor.Funcs{
+						Get: func(ctx context.Context, c client.WithWatch, key client.ObjectKey, obj client.Object, opts ...client.GetOption) error {
+							if obj.GetObjectKind().GroupVersionKind() == lookup.gvk &&
+								key.Name == lookup.objectName {
+								return tc.readErr
+							}
+							return c.Get(ctx, key, obj, opts...)
+						},
+					},
+				)
+				result, err := f.r.Reconcile(
+					t.Context(),
+					ctrl.Request{NamespacedName: client.ObjectKeyFromObject(f.pvc)},
+				)
 				reconcileResult := "enabled"
 				if tc.wantResult == "error" {
 					reconcileResult = "error"
 					if !errors.Is(err, tc.readErr) || result != (ctrl.Result{}) {
-						t.Errorf("expected API error and queue backoff, got result=%v err=%v", result, err)
+						t.Errorf(
+							"expected API error and queue backoff, got result=%v err=%v",
+							result,
+							err,
+						)
 					}
 				} else if err != nil || result.RequeueAfter != f.r.Config.ResyncInterval {
 					t.Errorf("expected periodic retry, got result=%v err=%v", result, err)
 				}
-				if got := testutil.ToFloat64(f.r.Metrics.Reconciles.WithLabelValues(reconcileResult)); got != 1 {
+				if got := testutil.ToFloat64(
+					f.r.Metrics.Reconciles.WithLabelValues(reconcileResult),
+				); got != 1 {
 					t.Errorf("reconciliations with result %q = %v, want 1", reconcileResult, got)
 				}
-				if got := testutil.ToFloat64(f.r.Metrics.Fields.WithLabelValues(lookup.field, tc.wantResult)); got != 1 {
-					t.Errorf("%s reconciliations with result %q = %v, want 1", lookup.field, tc.wantResult, got)
+				if got := testutil.ToFloat64(
+					f.r.Metrics.Fields.WithLabelValues(lookup.field, tc.wantResult),
+				); got != 1 {
+					t.Errorf(
+						"%s reconciliations with result %q = %v, want 1",
+						lookup.field,
+						tc.wantResult,
+						got,
+					)
 				}
 				f.settings(t, "default", lookup.wantReplicas)
 			})
@@ -573,7 +705,14 @@ func TestLonghornNotFoundClassification(t *testing.T) {
 
 func TestBackupTargetAndLegacyValidation(t *testing.T) {
 	f := newFixture(t)
-	if err := CheckBackupTarget(t.Context(), f.c, "longhorn", "missing"); !apierrors.IsNotFound(err) {
+	if err := CheckBackupTarget(
+		t.Context(),
+		f.c,
+		"longhorn",
+		"missing",
+	); !kerror.IsNotFound(
+		err,
+	) {
 		t.Fatalf("got %v", err)
 	}
 	if err := CheckBackupTarget(t.Context(), f.c, "longhorn", "default"); err != nil {
@@ -581,7 +720,7 @@ func TestBackupTargetAndLegacyValidation(t *testing.T) {
 	}
 	v := f.getVolume(t)
 	v.SetLabels(map[string]string{"longhorn.io/legacy-linked-clone": "true"})
-	f.c.Update(t.Context(), v)
+	_ = f.c.Update(t.Context(), v)
 	f.reconcile(t)
 	f.settings(t, "rustfs", 1)
 	f.metadata(t, map[string]string{EnabledLabel: "true", BackupTargetAnnotation: "missing"})
@@ -591,7 +730,7 @@ func TestBackupTargetAndLegacyValidation(t *testing.T) {
 	target := Resource(BackupTargetGVK)
 	target.SetName("missing")
 	target.SetNamespace("longhorn")
-	f.c.Create(t.Context(), target)
+	_ = f.c.Create(t.Context(), target)
 	f.reconcile(t)
 	f.settings(t, "missing", 1)
 }
@@ -599,7 +738,7 @@ func TestBackupTargetAndLegacyValidation(t *testing.T) {
 func TestEventMapping(t *testing.T) {
 	f := newFixture(t)
 	ctx := t.Context()
-	want := []ctrl.Request{{NamespacedName: types.NamespacedName{Namespace: "app", Name: "claim"}}}
+	want := []ctrl.Request{{Namespace: "app", Name: "claim"}}
 	if got := f.r.ClaimsForPV(ctx, f.pv); !reflect.DeepEqual(got, want) {
 		t.Fatalf("PV map: %v", got)
 	}
@@ -613,9 +752,13 @@ func TestEventMapping(t *testing.T) {
 	}
 	// Create a PVC with a backup target annotation to test ClaimsForTarget field index.
 	pvcWithLabel := &corev1.PersistentVolumeClaim{
-		ObjectMeta: metav1.ObjectMeta{Name: "claim-with-label", Namespace: "app", UID: "claim-uid-2", Labels: map[string]string{EnabledLabel: "true"}, Annotations: map[string]string{BackupTargetAnnotation: "default"}},
-		Spec:       corev1.PersistentVolumeClaimSpec{VolumeName: "pv"},
-		Status:     corev1.PersistentVolumeClaimStatus{Phase: corev1.ClaimBound},
+		Name:        "claim-with-label",
+		Namespace:   "app",
+		UID:         "claim-uid-2",
+		Labels:      map[string]string{EnabledLabel: "true"},
+		Annotations: map[string]string{BackupTargetAnnotation: "default"},
+		Spec:        corev1.PersistentVolumeClaimSpec{VolumeName: "pv"},
+		Status:      corev1.PersistentVolumeClaimStatus{Phase: corev1.ClaimBound},
 	}
 	if err := f.c.Create(ctx, pvcWithLabel); err != nil {
 		t.Fatal(err)
@@ -623,7 +766,9 @@ func TestEventMapping(t *testing.T) {
 	target := Resource(BackupTargetGVK)
 	target.SetNamespace("longhorn")
 	target.SetName("default")
-	wantWithLabel := []ctrl.Request{{NamespacedName: types.NamespacedName{Namespace: "app", Name: "claim-with-label"}}}
+	wantWithLabel := []ctrl.Request{
+		{Namespace: "app", Name: "claim-with-label"},
+	}
 	if got := f.r.ClaimsForTarget(ctx, target); !reflect.DeepEqual(got, wantWithLabel) {
 		t.Fatalf("target map: %v", got)
 	}
@@ -668,9 +813,11 @@ func TestDeletingResourcesAndMissingClaim(t *testing.T) {
 			var obj client.Object
 			switch resource {
 			case "claim":
-				obj = &corev1.PersistentVolumeClaim{ObjectMeta: metav1.ObjectMeta{Namespace: "app", Name: "claim"}}
+				obj = &corev1.PersistentVolumeClaim{
+					Namespace: "app", Name: "claim",
+				}
 			case "pv":
-				obj = &corev1.PersistentVolume{ObjectMeta: metav1.ObjectMeta{Name: "pv"}}
+				obj = &corev1.PersistentVolume{Name: "pv"}
 			case "volume":
 				obj = f.volume.DeepCopy()
 			case "target":
@@ -710,14 +857,30 @@ func TestDeletingResourcesAndMissingClaim(t *testing.T) {
 func TestConflictRechecksChangedOverrides(t *testing.T) {
 	f := newFixture(t)
 	first := true
-	f.r.Client = interceptor.NewClient(f.c, interceptor.Funcs{Patch: func(ctx context.Context, c client.WithWatch, obj client.Object, patch client.Patch, opts ...client.PatchOption) error {
-		if first {
-			first = false
-			f.metadata(t, map[string]string{EnabledLabel: "true", BackupTargetAnnotation: "default", ReplicasAnnotation: "4"})
-			return apierrors.NewConflict(schema.GroupResource{Group: "longhorn.io", Resource: "volumes"}, obj.GetName(), fmt.Errorf("conflict"))
-		}
-		return c.Patch(ctx, obj, patch, opts...)
-	}})
+	f.r.Client = interceptor.NewClient(
+		f.c,
+		interceptor.Funcs{
+			Patch: func(ctx context.Context, c client.WithWatch, obj client.Object, patch client.Patch, opts ...client.PatchOption) error {
+				if first {
+					first = false
+					f.metadata(
+						t,
+						map[string]string{
+							EnabledLabel:           "true",
+							BackupTargetAnnotation: "default",
+							ReplicasAnnotation:     "4",
+						},
+					)
+					return kerror.NewConflict(
+						kschema.GroupResource{Group: "longhorn.io", Resource: "volumes"},
+						obj.GetName(),
+						errors.New("conflict"),
+					)
+				}
+				return c.Patch(ctx, obj, patch, opts...)
+			},
+		},
+	)
 	f.reconcile(t)
 	f.settings(t, "default", 4)
 }
@@ -730,19 +893,27 @@ func TestInitialClaimReadErrorMetrics(t *testing.T) {
 		readErr   error
 		wantError bool
 	}{
-		{"forbidden", apierrors.NewForbidden(schema.GroupResource{Resource: "persistentvolumeclaims"}, "claim", errors.New("denied")), true},
+		{"forbidden", kerror.NewForbidden(kschema.GroupResource{Resource: "persistentvolumeclaims"}, "claim", errors.New("denied")), true},
 		{"deadline", context.DeadlineExceeded, true},
-		{"not found", apierrors.NewNotFound(schema.GroupResource{Resource: "persistentvolumeclaims"}, "claim"), false},
+		{"not found", kerror.NewNotFound(kschema.GroupResource{Resource: "persistentvolumeclaims"}, "claim"), false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			f := newFixture(t)
-			f.r.Reader = interceptor.NewClient(f.c, interceptor.Funcs{Get: func(_ context.Context, _ client.WithWatch, _ client.ObjectKey, obj client.Object, _ ...client.GetOption) error {
-				if _, ok := obj.(*corev1.PersistentVolumeClaim); !ok {
-					t.Fatal("read beyond the failed initial claim lookup")
-				}
-				return tc.readErr
-			}})
-			result, err := f.r.Reconcile(t.Context(), ctrl.Request{NamespacedName: client.ObjectKeyFromObject(f.pvc)})
+			f.r.Reader = interceptor.NewClient(
+				f.c,
+				interceptor.Funcs{
+					Get: func(_ context.Context, _ client.WithWatch, _ client.ObjectKey, obj client.Object, _ ...client.GetOption) error {
+						if _, ok := obj.(*corev1.PersistentVolumeClaim); !ok {
+							t.Fatal("read beyond the failed initial claim lookup")
+						}
+						return tc.readErr
+					},
+				},
+			)
+			result, err := f.r.Reconcile(
+				t.Context(),
+				ctrl.Request{NamespacedName: client.ObjectKeyFromObject(f.pvc)},
+			)
 			wantCount := float64(0)
 			if tc.wantError {
 				wantCount = 1
@@ -752,7 +923,9 @@ func TestInitialClaimReadErrorMetrics(t *testing.T) {
 			} else if err != nil {
 				t.Fatalf("deleted claim returned an error: %v", err)
 			}
-			if got := testutil.ToFloat64(f.r.Metrics.Reconciles.WithLabelValues("error")); got != wantCount {
+			if got := testutil.ToFloat64(
+				f.r.Metrics.Reconciles.WithLabelValues("error"),
+			); got != wantCount {
 				t.Errorf("error reconciliations = %v, want %v", got, wantCount)
 			}
 			if result != (ctrl.Result{}) || f.patches != 0 {
@@ -779,7 +952,9 @@ func TestDryRunLeavesVolumeUnchanged(t *testing.T) {
 		t.Fatalf("dry run changed the volume: %v", after.Object)
 	}
 	for _, field := range []string{"backupTargetName", "numberOfReplicas"} {
-		if got := testutil.ToFloat64(f.r.Metrics.Fields.WithLabelValues(field, "dry-run")); got != 1 {
+		if got := testutil.ToFloat64(
+			f.r.Metrics.Fields.WithLabelValues(field, "dry-run"),
+		); got != 1 {
 			t.Fatalf("%s dry-run count = %v, want 1", field, got)
 		}
 	}

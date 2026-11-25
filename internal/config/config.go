@@ -1,6 +1,7 @@
 package config
 
 import (
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -20,11 +21,13 @@ type Config struct {
 	DryRun            bool
 }
 
+const defaultReplicas = 3
+
 func Default() Config {
 	return Config{
 		LonghornNamespace: "longhorn",
 		BackupTarget:      "default",
-		Replicas:          3,
+		Replicas:          defaultReplicas,
 		ResyncInterval:    time.Minute,
 		LeaderElection:    true,
 		LeaderNamespace:   "hornkeeper",
@@ -33,21 +36,21 @@ func Default() Config {
 	}
 }
 
-func (c Config) Validate() error {
-	if errs := validation.IsDNS1123Label(c.LonghornNamespace); len(errs) != 0 {
+func (cfg *Config) Validate() error {
+	if errs := validation.IsDNS1123Label(cfg.LonghornNamespace); len(errs) != 0 {
 		return fmt.Errorf("invalid Longhorn namespace: %s", strings.Join(errs, "; "))
 	}
-	if err := ValidateBackupTarget(c.BackupTarget); err != nil {
+	if err := ValidateBackupTarget(cfg.BackupTarget); err != nil {
 		return fmt.Errorf("invalid default backup target: %w", err)
 	}
-	if err := ValidateReplicas(c.Replicas); err != nil {
+	if err := ValidateReplicas(cfg.Replicas); err != nil {
 		return fmt.Errorf("invalid default replicas: %w", err)
 	}
-	if c.ResyncInterval <= 0 {
-		return fmt.Errorf("resync interval must be positive")
+	if cfg.ResyncInterval <= 0 {
+		return errors.New("resync interval must be positive")
 	}
-	if c.LeaderElection {
-		if errs := validation.IsDNS1123Label(c.LeaderNamespace); len(errs) != 0 {
+	if cfg.LeaderElection {
+		if errs := validation.IsDNS1123Label(cfg.LeaderNamespace); len(errs) != 0 {
 			return fmt.Errorf("invalid leader election namespace: %s", strings.Join(errs, "; "))
 		}
 	}
@@ -56,10 +59,13 @@ func (c Config) Validate() error {
 
 func ValidateBackupTarget(name string) error {
 	if name == "" {
-		return fmt.Errorf("backup target must not be empty")
+		return errors.New("backup target must not be empty")
 	}
 	if errs := validation.IsDNS1123Subdomain(name); len(errs) != 0 {
-		return fmt.Errorf("backup target must be a valid Kubernetes resource name: %s", strings.Join(errs, "; "))
+		return fmt.Errorf(
+			"backup target must be a valid Kubernetes resource name: %s",
+			strings.Join(errs, "; "),
+		)
 	}
 	return nil
 }

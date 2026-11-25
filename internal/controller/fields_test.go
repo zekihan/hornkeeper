@@ -63,7 +63,9 @@ func TestOptionalFieldsLifecycle(t *testing.T) {
 			if f.patches != before+1 {
 				t.Fatalf("expected one patch, got %d", f.patches-before)
 			}
-			if got := testutil.ToFloat64(f.r.Metrics.Fields.WithLabelValues(tc.field, "patched")); got != 1 {
+			if got := testutil.ToFloat64(
+				f.r.Metrics.Fields.WithLabelValues(tc.field, "patched"),
+			); got != 1 {
 				t.Fatalf("patched metric = %v", got)
 			}
 			f.reconcile(t)
@@ -73,7 +75,7 @@ func TestOptionalFieldsLifecycle(t *testing.T) {
 			// Removing an optional annotation stops enforcement and keeps the value.
 			f.metadata(t, map[string]string{EnabledLabel: "true"})
 			f.updateVolume(t, func(v *unstructured.Unstructured) {
-				unstructured.SetNestedField(v.Object, "manual", "spec", tc.field)
+				_ = unstructured.SetNestedField(v.Object, "manual", "spec", tc.field)
 			})
 			f.reconcile(t)
 			if got := f.specField(t, tc.field); got != "manual" {
@@ -85,14 +87,22 @@ func TestOptionalFieldsLifecycle(t *testing.T) {
 
 func TestOptionalFieldsDriftAndDisable(t *testing.T) {
 	f := newFixture(t)
-	f.metadata(t, map[string]string{EnabledLabel: "true", SnapshotMaxCountAnnotation: "100", ReplicaAutoBalanceAnnotation: "best-effort"})
+	f.metadata(
+		t,
+		map[string]string{
+			EnabledLabel:                 "true",
+			SnapshotMaxCountAnnotation:   "100",
+			ReplicaAutoBalanceAnnotation: "best-effort",
+		},
+	)
 	f.reconcile(t)
 	f.updateVolume(t, func(v *unstructured.Unstructured) {
-		unstructured.SetNestedField(v.Object, int64(10), "spec", "snapshotMaxCount")
-		unstructured.SetNestedField(v.Object, "disabled", "spec", "replicaAutoBalance")
+		_ = unstructured.SetNestedField(v.Object, int64(10), "spec", "snapshotMaxCount")
+		_ = unstructured.SetNestedField(v.Object, "disabled", "spec", "replicaAutoBalance")
 	})
 	f.reconcile(t)
-	if f.specField(t, "snapshotMaxCount") != int64(100) || f.specField(t, "replicaAutoBalance") != "best-effort" {
+	if f.specField(t, "snapshotMaxCount") != int64(100) ||
+		f.specField(t, "replicaAutoBalance") != "best-effort" {
 		t.Fatal("drift was not corrected")
 	}
 	f.metadata(t, map[string]string{EnabledLabel: "false", SnapshotMaxCountAnnotation: "50"})
@@ -129,21 +139,21 @@ func TestOptionalFieldsInvalid(t *testing.T) {
 		{"size below twice volume", SnapshotMaxSizeAnnotation, "2047Mi", "snapshotMaxSize", nil},
 		{"bandwidth on v1", ReplicaRebuildingBandwidthLimitAnnotation, "100", "replicaRebuildingBandwidthLimit", nil},
 		{"unmap on v2", UnmapMarkSnapChainRemovedAnnotation, "enabled", "unmapMarkSnapChainRemoved", func(v *unstructured.Unstructured) {
-			unstructured.SetNestedField(v.Object, "v2", "spec", "dataEngine")
+			_ = unstructured.SetNestedField(v.Object, "v2", "spec", "dataEngine")
 		}},
 		{"zone pinned", ReplicaZoneSoftAntiAffinityAnnotation, "disabled", "replicaZoneSoftAntiAffinity", func(v *unstructured.Unstructured) {
-			unstructured.SetNestedSlice(v.Object, []any{map[string]any{"zone": "a"}, map[string]any{"zone": "a", "region": "r"}}, "spec", "topologyRequirement")
+			_ = unstructured.SetNestedSlice(v.Object, []any{map[string]any{"zone": "a"}, map[string]any{"zone": "a", "region": "r"}}, "spec", "topologyRequirement")
 		}},
 		{"strict local attached", DataLocalityAnnotation, "strict-local", "dataLocality", nil},
 		{"strict local replicas", DataLocalityAnnotation, "strict-local", "dataLocality", func(v *unstructured.Unstructured) {
-			unstructured.SetNestedField(v.Object, "detached", "status", "state")
-			unstructured.SetNestedField(v.Object, int64(3), "spec", "numberOfReplicas")
+			_ = unstructured.SetNestedField(v.Object, "detached", "status", "state")
+			_ = unstructured.SetNestedField(v.Object, int64(3), "spec", "numberOfReplicas")
 		}},
 		{"leave strict local attached", DataLocalityAnnotation, "best-effort", "dataLocality", func(v *unstructured.Unstructured) {
-			unstructured.SetNestedField(v.Object, "strict-local", "spec", "dataLocality")
+			_ = unstructured.SetNestedField(v.Object, "strict-local", "spec", "dataLocality")
 		}},
 		{"sharded locality", DataLocalityAnnotation, "best-effort", "dataLocality", func(v *unstructured.Unstructured) {
-			unstructured.SetNestedField(v.Object, "sharded", "spec", "dataLayout", "type")
+			_ = unstructured.SetNestedField(v.Object, "sharded", "spec", "dataLayout", "type")
 		}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -157,7 +167,9 @@ func TestOptionalFieldsInvalid(t *testing.T) {
 			if got := f.specField(t, tc.field); !reflect.DeepEqual(got, before) {
 				t.Fatalf("invalid value changed %s to %#v", tc.field, got)
 			}
-			if got := testutil.ToFloat64(f.r.Metrics.Fields.WithLabelValues(tc.field, "invalid")); got != 1 {
+			if got := testutil.ToFloat64(
+				f.r.Metrics.Fields.WithLabelValues(tc.field, "invalid"),
+			); got != 1 {
 				t.Fatalf("invalid metric = %v", got)
 			}
 			// Invalid optional fields do not block the default-managed fields.
@@ -175,22 +187,22 @@ func TestOptionalFieldsAccepted(t *testing.T) {
 		mutate                         func(v *unstructured.Unstructured)
 	}{
 		{"bandwidth on v2", ReplicaRebuildingBandwidthLimitAnnotation, "100", "replicaRebuildingBandwidthLimit", int64(100), func(v *unstructured.Unstructured) {
-			unstructured.SetNestedField(v.Object, "v2", "spec", "dataEngine")
+			_ = unstructured.SetNestedField(v.Object, "v2", "spec", "dataEngine")
 		}},
 		{"unmap disabled on v2", UnmapMarkSnapChainRemovedAnnotation, "disabled", "unmapMarkSnapChainRemoved", "disabled", func(v *unstructured.Unstructured) {
-			unstructured.SetNestedField(v.Object, "v2", "spec", "dataEngine")
+			_ = unstructured.SetNestedField(v.Object, "v2", "spec", "dataEngine")
 		}},
 		{"zone pinned enabled", ReplicaZoneSoftAntiAffinityAnnotation, "enabled", "replicaZoneSoftAntiAffinity", "enabled", func(v *unstructured.Unstructured) {
-			unstructured.SetNestedSlice(v.Object, []any{map[string]any{"zone": "a"}}, "spec", "topologyRequirement")
+			_ = unstructured.SetNestedSlice(v.Object, []any{map[string]any{"zone": "a"}}, "spec", "topologyRequirement")
 		}},
 		{"multiple zones", ReplicaZoneSoftAntiAffinityAnnotation, "disabled", "replicaZoneSoftAntiAffinity", "disabled", func(v *unstructured.Unstructured) {
-			unstructured.SetNestedSlice(v.Object, []any{map[string]any{"zone": "a"}, map[string]any{"zone": "b"}}, "spec", "topologyRequirement")
+			_ = unstructured.SetNestedSlice(v.Object, []any{map[string]any{"zone": "a"}, map[string]any{"zone": "b"}}, "spec", "topologyRequirement")
 		}},
 		{"region only", ReplicaZoneSoftAntiAffinityAnnotation, "disabled", "replicaZoneSoftAntiAffinity", "disabled", func(v *unstructured.Unstructured) {
-			unstructured.SetNestedSlice(v.Object, []any{map[string]any{"region": "r"}}, "spec", "topologyRequirement")
+			_ = unstructured.SetNestedSlice(v.Object, []any{map[string]any{"region": "r"}}, "spec", "topologyRequirement")
 		}},
 		{"strict local detached", DataLocalityAnnotation, "strict-local", "dataLocality", "strict-local", func(v *unstructured.Unstructured) {
-			unstructured.SetNestedField(v.Object, "detached", "status", "state")
+			_ = unstructured.SetNestedField(v.Object, "detached", "status", "state")
 		}},
 		{"size exactly twice volume", SnapshotMaxSizeAnnotation, "2Gi", "snapshotMaxSize", "2147483648", nil},
 		{"fractional GiB with whole bytes", SnapshotMaxSizeAnnotation, "2.5Gi", "snapshotMaxSize", "2684354560", nil},
@@ -204,7 +216,14 @@ func TestOptionalFieldsAccepted(t *testing.T) {
 			if tc.mutate != nil {
 				f.updateVolume(t, tc.mutate)
 			}
-			f.metadata(t, map[string]string{EnabledLabel: "true", ReplicasAnnotation: "1", tc.annotation: tc.value})
+			f.metadata(
+				t,
+				map[string]string{
+					EnabledLabel:       "true",
+					ReplicasAnnotation: "1",
+					tc.annotation:      tc.value,
+				},
+			)
 			f.reconcile(t)
 			if got := f.specField(t, tc.field); !reflect.DeepEqual(got, tc.want) {
 				t.Fatalf("got %s=%#v, want %#v", tc.field, got, tc.want)
@@ -230,12 +249,14 @@ func TestUblkZeroMatchesAbsentFields(t *testing.T) {
 			if f.patches != before {
 				t.Fatalf("patched absent %s to zero", tc.field)
 			}
-			if got := testutil.ToFloat64(f.r.Metrics.Fields.WithLabelValues(tc.field, "unchanged")); got != 1 {
+			if got := testutil.ToFloat64(
+				f.r.Metrics.Fields.WithLabelValues(tc.field, "unchanged"),
+			); got != 1 {
 				t.Fatalf("unchanged metric = %v, want 1", got)
 			}
 
 			f.updateVolume(t, func(v *unstructured.Unstructured) {
-				unstructured.SetNestedField(v.Object, tc.nonzero, "spec", tc.field)
+				_ = unstructured.SetNestedField(v.Object, tc.nonzero, "spec", tc.field)
 			})
 			f.reconcile(t)
 			if got := f.specField(t, tc.field); got != int64(0) {
@@ -262,12 +283,15 @@ func TestStrictLocalConflictsWithDesiredReplicas(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			f := newFixture(t)
 			f.updateVolume(t, func(v *unstructured.Unstructured) {
-				unstructured.SetNestedField(v.Object, "detached", "status", "state")
+				_ = unstructured.SetNestedField(v.Object, "detached", "status", "state")
 				if tc.legacyClone {
 					v.SetLabels(map[string]string{legacyLinkedCloneLabel: "true"})
 				}
 			})
-			metadata := map[string]string{EnabledLabel: "true", DataLocalityAnnotation: "strict-local"}
+			metadata := map[string]string{
+				EnabledLabel:           "true",
+				DataLocalityAnnotation: "strict-local",
+			}
 			if tc.override != nil {
 				metadata[ReplicasAnnotation] = *tc.override
 			}
@@ -294,19 +318,28 @@ func TestDataLocalityAndAccessMode(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			f := newFixture(t)
 			f.updateVolume(t, func(v *unstructured.Unstructured) {
-				unstructured.SetNestedField(v.Object, "detached", "status", "state")
-				unstructured.SetNestedField(v.Object, "rwx", "spec", "accessMode")
+				_ = unstructured.SetNestedField(v.Object, "detached", "status", "state")
+				_ = unstructured.SetNestedField(v.Object, "rwx", "spec", "accessMode")
 				if tc.migratable != nil {
-					unstructured.SetNestedField(v.Object, *tc.migratable, "spec", "migratable")
+					_ = unstructured.SetNestedField(v.Object, *tc.migratable, "spec", "migratable")
 				}
 			})
-			f.metadata(t, map[string]string{EnabledLabel: "true", DataLocalityAnnotation: tc.locality, ReplicasAnnotation: "1"})
+			f.metadata(
+				t,
+				map[string]string{
+					EnabledLabel:           "true",
+					DataLocalityAnnotation: tc.locality,
+					ReplicasAnnotation:     "1",
+				},
+			)
 			f.reconcile(t)
 			if got := f.specField(t, "dataLocality"); got != tc.want {
 				t.Errorf("dataLocality = %v, want %s", got, tc.want)
 			}
 			if tc.locality != tc.want {
-				if got := testutil.ToFloat64(f.r.Metrics.Fields.WithLabelValues("dataLocality", "invalid")); got != 1 {
+				if got := testutil.ToFloat64(
+					f.r.Metrics.Fields.WithLabelValues("dataLocality", "invalid"),
+				); got != 1 {
 					t.Errorf("invalid dataLocality metric = %v, want 1", got)
 				}
 			}
@@ -318,10 +351,17 @@ func TestDataLocalityAndAccessMode(t *testing.T) {
 func TestLeavingStrictLocalRaisesReplicasInOnePass(t *testing.T) {
 	f := newFixture(t)
 	f.updateVolume(t, func(v *unstructured.Unstructured) {
-		unstructured.SetNestedField(v.Object, "strict-local", "spec", "dataLocality")
-		unstructured.SetNestedField(v.Object, "detached", "status", "state")
+		_ = unstructured.SetNestedField(v.Object, "strict-local", "spec", "dataLocality")
+		_ = unstructured.SetNestedField(v.Object, "detached", "status", "state")
 	})
-	f.metadata(t, map[string]string{EnabledLabel: "true", DataLocalityAnnotation: "best-effort", ReplicasAnnotation: "3"})
+	f.metadata(
+		t,
+		map[string]string{
+			EnabledLabel:           "true",
+			DataLocalityAnnotation: "best-effort",
+			ReplicasAnnotation:     "3",
+		},
+	)
 	f.reconcile(t)
 	if got := f.specField(t, "dataLocality"); got != "best-effort" {
 		t.Fatalf("dataLocality = %v", got)
@@ -337,7 +377,9 @@ func TestOptionalFieldsDryRun(t *testing.T) {
 	if f.patches != 0 || f.specField(t, "snapshotMaxCount") != nil {
 		t.Fatal("dry run changed the volume")
 	}
-	if got := testutil.ToFloat64(f.r.Metrics.Fields.WithLabelValues("snapshotMaxCount", "dry-run")); got != 1 {
+	if got := testutil.ToFloat64(
+		f.r.Metrics.Fields.WithLabelValues("snapshotMaxCount", "dry-run"),
+	); got != 1 {
 		t.Fatalf("dry-run metric = %v", got)
 	}
 }
