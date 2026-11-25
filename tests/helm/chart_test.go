@@ -12,6 +12,7 @@ import (
 	"github.com/zekihan/hornkeeper/internal/config"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
+	policyv1 "k8s.io/api/policy/v1"
 	rbacv1 "k8s.io/api/rbac/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -38,7 +39,7 @@ func helmBinary(t *testing.T) string {
 func TestRenderedChartKubernetesNames(t *testing.T) {
 	helm := helmBinary(t)
 	scheme := runtime.NewScheme()
-	for _, add := range []func(*runtime.Scheme) error{corev1.AddToScheme, appsv1.AddToScheme, rbacv1.AddToScheme} {
+	for _, add := range []func(*runtime.Scheme) error{corev1.AddToScheme, appsv1.AddToScheme, rbacv1.AddToScheme, policyv1.AddToScheme} {
 		if err := add(scheme); err != nil {
 			t.Fatal(err)
 		}
@@ -93,7 +94,7 @@ func TestRenderedChartKubernetesNames(t *testing.T) {
 				switch obj.(type) {
 				case *corev1.Service:
 					nameErrors = validation.IsDNS1123Label(name)
-				case *appsv1.Deployment, *corev1.ServiceAccount:
+				case *appsv1.Deployment, *corev1.ServiceAccount, *policyv1.PodDisruptionBudget:
 					nameErrors = validation.IsDNS1123Subdomain(name)
 				}
 				if len(nameErrors) != 0 {
@@ -101,8 +102,8 @@ func TestRenderedChartKubernetesNames(t *testing.T) {
 				}
 				count++
 			}
-			if count != 9 {
-				t.Fatalf("decoded %d resources, want 9", count)
+			if count != 10 {
+				t.Fatalf("decoded %d resources, want 10", count)
 			}
 		})
 	}
