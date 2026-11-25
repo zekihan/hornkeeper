@@ -49,6 +49,9 @@ starting the controller. Disabling leader election requires `replicaCount=1`.
 With leader election enabled, the Deployment uses Kubernetes `RollingUpdate`;
 with leader election disabled, it uses `Recreate` to prevent overlapping controllers
 during an update. The health listener and probes remain enabled when metrics are disabled.
+With more than one replica, the chart creates a `PodDisruptionBudget` with
+`minAvailable: 1` matching the Deployment selector. Single-replica
+installations omit it so voluntary evictions are never blocked.
 
 If an older release was installed with server-side apply and its chart did not
 declare `spec.strategy.rollingUpdate`, first upgrade to a chart that declares it

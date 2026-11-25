@@ -107,6 +107,20 @@ class ChartTests(unittest.TestCase):
             "rollingUpdate": {"maxSurge": "25%", "maxUnavailable": "25%"},
         })
 
+    def test_pdb_matches_deployment_selector(self):
+        items = resources()
+        deployment = get(items, "Deployment")
+        pdb = get(items, "PodDisruptionBudget")
+        self.assertEqual(pdb["metadata"]["namespace"],
+                         deployment["metadata"]["namespace"])
+        self.assertEqual(pdb["spec"]["minAvailable"], 1)
+        self.assertEqual(pdb["spec"]["selector"]["matchLabels"],
+                         deployment["spec"]["selector"]["matchLabels"])
+
+    def test_single_replica_omits_pdb(self):
+        items = resources({"replicaCount": 1, "controller": {"leaderElection": False}})
+        self.assertFalse(any(item["kind"] == "PodDisruptionBudget" for item in items))
+
     def test_single_replica_without_election_or_metrics(self):
         items = resources({"replicaCount": 1, "controller": {"leaderElection": False},
                            "metrics": {"enabled": False}})
@@ -128,7 +142,8 @@ class ChartTests(unittest.TestCase):
                            "tolerations": [{"key": "dedicated", "operator": "Exists"}],
                            "affinity": {"nodeAffinity": {}},
                            "podAnnotations": {"example.com/owner": "storage"}})
-        self.assertEqual({item["kind"] for item in items}, {"Deployment", "Service"})
+        self.assertEqual({item["kind"] for item in items},
+                         {"Deployment", "PodDisruptionBudget", "Service"})
         deployment = get(items, "Deployment")
         service = get(items, "Service")["spec"]
         self.assertEqual(service["selector"], deployment["spec"]["selector"]["matchLabels"])
@@ -158,6 +173,7 @@ class ChartTests(unittest.TestCase):
         rbac_name = f"{namespace}-{fullname}"
         expected_metadata = [
             ("Deployment", fullname, namespace),
+            ("PodDisruptionBudget", fullname, namespace),
             ("Service", fullname, namespace),
             ("ServiceAccount", service_account, namespace),
             ("ClusterRole", rbac_name, None),
