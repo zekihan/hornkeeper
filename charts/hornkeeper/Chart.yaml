@@ -2,8 +2,8 @@ apiVersion: v2
 name: hornkeeper
 description: Reconcile opted-in Longhorn volumes from PVC labels
 type: application
-version: 0.2.2
-appVersion: "0.2.2"
+version: 0.2.3
+appVersion: "0.2.3"
 home: https://github.com/zekihan/hornkeeper
 sources:
   - https://github.com/zekihan/hornkeeper
