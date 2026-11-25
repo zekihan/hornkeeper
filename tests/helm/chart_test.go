@@ -9,16 +9,18 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/zekihan/hornkeeper/internal/config"
+	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/runtime/serializer"
+	"k8s.io/apimachinery/pkg/util/validation"
+	"k8s.io/apimachinery/pkg/util/yaml"
+
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	policyv1 "k8s.io/api/policy/v1"
 	rbacv1 "k8s.io/api/rbac/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/runtime"
-	"k8s.io/apimachinery/pkg/runtime/serializer"
-	"k8s.io/apimachinery/pkg/util/validation"
-	"k8s.io/apimachinery/pkg/util/yaml"
+
+	"github.com/zekihan/hornkeeper/internal/config"
 )
 
 func helmBinary(t *testing.T) string {
@@ -38,17 +40,8 @@ func helmBinary(t *testing.T) string {
 // fields and resource names that Kubernetes can decode but rejects on admission.
 func TestRenderedChartKubernetesNames(t *testing.T) {
 	helm := helmBinary(t)
-	scheme := runtime.NewScheme()
-	for _, add := range []func(*runtime.Scheme) error{corev1.AddToScheme, appsv1.AddToScheme, rbacv1.AddToScheme, policyv1.AddToScheme} {
-		if err := add(scheme); err != nil {
-			t.Fatal(err)
-		}
-	}
-	decoder := serializer.NewCodecFactory(scheme, serializer.EnableStrict).UniversalDeserializer()
-	for _, tc := range []struct {
-		name, release, namespace string
-		values                   []string
-	}{
+	decoder := newSchemeDecoder(t)
+	for _, tc := range []chartNameCase{
 		{name: "numeric release", release: "2026", namespace: "hornkeeper"},
 		{name: "boolean release", release: "on", namespace: "hornkeeper"},
 		{name: "dotted release", release: "ops.test", namespace: "hornkeeper"},
@@ -61,51 +54,101 @@ func TestRenderedChartKubernetesNames(t *testing.T) {
 		{name: "combined scalar strings", release: "2026", namespace: "on", values: []string{"nameOverride=off", "fullnameOverride=yes", "serviceAccount.name=123", "controller.longhornNamespace=2026"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			args := []string{"template", tc.release, "../../charts/hornkeeper", "--namespace", tc.namespace, "--set", "metrics.enabled=true"}
-			for _, value := range tc.values {
-				args = append(args, "--set-string", value)
-			}
-			output, err := exec.CommandContext(t.Context(), helm, args...).CombinedOutput()
-			if err != nil {
-				t.Fatalf("helm template: %v\n%s", err, output)
-			}
-			docs := yaml.NewYAMLOrJSONDecoder(bytes.NewReader(output), 4096)
-			count := 0
-			for {
-				var raw runtime.RawExtension
-				if err := docs.Decode(&raw); errors.Is(err, io.EOF) {
-					break
-				} else if err != nil {
-					t.Fatal(err)
-				}
-				if len(raw.Raw) == 0 {
-					continue
-				}
-				obj, gvk, err := decoder.Decode(raw.Raw, nil, nil)
-				if err != nil {
-					t.Fatalf("Kubernetes decoding failed: %v\n%s", err, raw.Raw)
-				}
-				metadata := obj.(metav1.Object)
-				if got := metadata.GetLabels()["app.kubernetes.io/instance"]; got != tc.release {
-					t.Errorf("%s release label = %q, want %q", gvk.Kind, got, tc.release)
-				}
-				name := metadata.GetName()
-				var nameErrors []string
-				switch obj.(type) {
-				case *corev1.Service:
-					nameErrors = validation.IsDNS1123Label(name)
-				case *appsv1.Deployment, *corev1.ServiceAccount, *policyv1.PodDisruptionBudget:
-					nameErrors = validation.IsDNS1123Subdomain(name)
-				}
-				if len(nameErrors) != 0 {
-					t.Errorf("%s name %q is invalid: %v", gvk.Kind, name, nameErrors)
-				}
-				count++
-			}
-			if count != 10 {
-				t.Fatalf("decoded %d resources, want 10", count)
-			}
+			output := renderChartTemplate(t, helm, tc)
+			checkRenderedDocs(t, decoder, output, tc.release)
 		})
+	}
+}
+
+type chartNameCase struct {
+	name, release, namespace string
+	values                   []string
+}
+
+// newSchemeDecoder builds a strict UniversalDeserializer for the chart objects.
+func newSchemeDecoder(t *testing.T) runtime.Decoder {
+	t.Helper()
+	scheme := runtime.NewScheme()
+	for _, add := range []func(*runtime.Scheme) error{corev1.AddToScheme, appsv1.AddToScheme, rbacv1.AddToScheme, policyv1.AddToScheme} {
+		if err := add(scheme); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	return serializer.NewCodecFactory(scheme, serializer.EnableStrict).UniversalDeserializer()
+}
+
+// renderChartTemplate renders the chart for one scalar-string case.
+func renderChartTemplate(t *testing.T, helm string, tc chartNameCase) []byte {
+	t.Helper()
+	args := make([]string, 0, 7+2*len(tc.values))
+	args = append(args,
+		"template",
+		tc.release,
+		"../../charts/hornkeeper",
+		"--namespace",
+		tc.namespace,
+		"--set",
+		"metrics.enabled=true",
+	)
+	for _, value := range tc.values {
+		args = append(args, "--set-string", value)
+	}
+	output, err := exec.CommandContext(t.Context(), helm, args...).CombinedOutput()
+	if err != nil {
+		t.Fatalf("helm template: %v\n%s", err, output)
+	}
+
+	return output
+}
+
+// checkRenderedDocs decodes the rendered documents and validates their labels
+// and per-kind names against the release name.
+func checkRenderedDocs(
+	t *testing.T,
+	decoder runtime.Decoder,
+	output []byte,
+	release string,
+) {
+	t.Helper()
+	docs := yaml.NewYAMLOrJSONDecoder(bytes.NewReader(output), 4096)
+	count := 0
+	for {
+		var raw runtime.RawExtension
+		if err := docs.Decode(&raw); errors.Is(err, io.EOF) {
+			break
+		} else if err != nil {
+			t.Fatal(err)
+		}
+		if len(raw.Raw) == 0 {
+			continue
+		}
+		obj, gvk, err := decoder.Decode(raw.Raw, nil, nil)
+		if err != nil {
+			t.Fatalf("Kubernetes decoding failed: %v\n%s", err, raw.Raw)
+		}
+		metadata, ok := obj.(metav1.Object)
+		if !ok {
+			t.Fatalf("decoded object is not a metav1.Object: %T", obj)
+		}
+		if got := metadata.GetLabels()["app.kubernetes.io/instance"]; got != release {
+			t.Errorf("%s release label = %q, want %q", gvk.Kind, got, release)
+		}
+		name := metadata.GetName()
+		var nameErrors []string
+		switch obj.(type) {
+		case *corev1.Service:
+			nameErrors = validation.IsDNS1123Label(name)
+		case *appsv1.Deployment, *corev1.ServiceAccount, *policyv1.PodDisruptionBudget:
+			nameErrors = validation.IsDNS1123Subdomain(name)
+		}
+		if len(nameErrors) != 0 {
+			t.Errorf("%s name %q is invalid: %v", gvk.Kind, name, nameErrors)
+		}
+		count++
+	}
+	if count != 10 {
+		t.Fatalf("decoded %d resources, want 10", count)
 	}
 }
 
@@ -134,11 +177,13 @@ func TestBackupTargetMatchesRuntime(t *testing.T) {
 			if err := cfg.Validate(); (err == nil) != tc.valid {
 				t.Fatalf("runtime validation = %v, valid = %v", err, tc.valid)
 			}
-			output, err := exec.CommandContext(t.Context(), helm, "template", "hornkeeper", "../../charts/hornkeeper", "--set-string", "controller.defaultBackupTarget="+tc.target).CombinedOutput()
+			output, err := exec.CommandContext(t.Context(), helm, "template", "hornkeeper", "../../charts/hornkeeper", "--set-string", "controller.defaultBackupTarget="+tc.target).
+				CombinedOutput()
 			if (err == nil) != tc.valid {
 				t.Fatalf("chart validation = %v, valid = %v\n%s", err, tc.valid, output)
 			}
-			if !tc.valid && (!bytes.Contains(output, []byte("schema")) || !bytes.Contains(output, []byte("defaultBackupTarget"))) {
+			if !tc.valid &&
+				(!bytes.Contains(output, []byte("schema")) || !bytes.Contains(output, []byte("defaultBackupTarget"))) {
 				t.Fatalf("expected target schema validation error, got %s", output)
 			}
 		})

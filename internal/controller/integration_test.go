@@ -9,23 +9,51 @@ import (
 
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/testutil"
-	"github.com/zekihan/hornkeeper/internal/config"
-	corev1 "k8s.io/api/core/v1"
-	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/resource"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
-	ctrl "sigs.k8s.io/controller-runtime"
+	"k8s.io/client-go/rest"
 	"sigs.k8s.io/controller-runtime/pkg/cache"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/envtest"
+
+	corev1 "k8s.io/api/core/v1"
+	kerror "k8s.io/apimachinery/pkg/api/errors"
+	ctrl "sigs.k8s.io/controller-runtime"
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
+
+	"github.com/zekihan/hornkeeper/internal/config"
 )
 
 func TestDisposableAPIServer(t *testing.T) {
+	_, apiConfig, scheme, c := startDisposableEnv(t)
+	ctx := t.Context()
+	volume, untouched, pvc := createDisposableFixtures(ctx, t, c)
+	m, r := startDisposableReconciler(ctx, t, apiConfig, scheme)
+	waitFor(
+		t,
+		func() bool { return testutil.ToFloat64(m.Reconciles.WithLabelValues("enabled")) > 0 },
+		"initial pending claim reconciliation",
+	)
+	if !assertVolumeSettings(ctx, t, c, volume, "default", 1) {
+		t.Fatal("pending claim changed volume")
+	}
+	bindDisposableClaim(ctx, t, c, volume, pvc)
+	disposableAnnotationsPhase(ctx, t, c, volume, pvc, m)
+	disposableDriftPhase(ctx, t, c, volume, untouched, pvc, m, r)
+}
+
+// startDisposableEnv starts the disposable envtest API server and client.
+func startDisposableEnv(
+	t *testing.T,
+) (*envtest.Environment, *rest.Config, *runtime.Scheme, client.Client) {
+	t.Helper()
 	// envtest launches its own etcd and API server; it never loads kubeconfig.
-	environment := &envtest.Environment{CRDDirectoryPaths: []string{"testdata"}, ErrorIfCRDPathMissing: true, UseExistingCluster: new(false)}
+	environment := &envtest.Environment{
+		CRDDirectoryPaths:     []string{"testdata"},
+		ErrorIfCRDPathMissing: true,
+		UseExistingCluster:    new(false),
+	}
 	t.Cleanup(func() {
 		if err := environment.Stop(); err != nil {
 			t.Error(err)
@@ -43,9 +71,23 @@ func TestDisposableAPIServer(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	ctx := t.Context()
+
+	return environment, apiConfig, scheme, c
+}
+
+// createDisposableFixtures seeds namespaces, backup targets, volumes and the
+// pending claim for the disposable-server scenario.
+func createDisposableFixtures(
+	ctx context.Context,
+	t *testing.T,
+	c client.Client,
+) (*unstructured.Unstructured, *unstructured.Unstructured, *corev1.PersistentVolumeClaim) {
+	t.Helper()
 	for _, name := range []string{"storage", "app"} {
-		if err := c.Create(ctx, &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: name}}); err != nil {
+		if err := c.Create(
+			ctx,
+			&corev1.Namespace{Name: name},
+		); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -60,13 +102,20 @@ func TestDisposableAPIServer(t *testing.T) {
 	if err := CheckBackupTarget(ctx, c, "storage", "rustfs"); err != nil {
 		t.Fatal(err)
 	}
-	if err := CheckBackupTarget(ctx, c, "storage", "absent"); !apierrors.IsNotFound(err) {
+	if err := CheckBackupTarget(ctx, c, "storage", "absent"); !kerror.IsNotFound(err) {
 		t.Fatalf("expected missing target, got %v", err)
 	}
 	volume := Resource(VolumeGVK)
 	volume.SetName("restored-handle")
 	volume.SetNamespace("storage")
-	volume.Object["spec"] = map[string]any{"numberOfReplicas": int64(1), "backupTargetName": "default", "size": "1073741824", "dataLocality": "disabled", "fromBackup": "s3://existing-backup", "nodeID": "original-node"}
+	volume.Object["spec"] = map[string]any{
+		"numberOfReplicas": int64(1),
+		"backupTargetName": "default",
+		"size":             "1073741824",
+		"dataLocality":     "disabled",
+		"fromBackup":       "s3://existing-backup",
+		"nodeID":           "original-node",
+	}
 	if err := c.Create(ctx, volume); err != nil {
 		t.Fatal(err)
 	}
@@ -77,19 +126,46 @@ func TestDisposableAPIServer(t *testing.T) {
 	if err := c.Create(ctx, untouched); err != nil {
 		t.Fatal(err)
 	}
+	requests := make(corev1.ResourceList)
+	requests[corev1.ResourceStorage] = resource.MustParse("1Gi")
 	pvc := &corev1.PersistentVolumeClaim{
-		ObjectMeta: metav1.ObjectMeta{Namespace: "app", Name: "restored", Labels: map[string]string{EnabledLabel: "true"}},
-		Spec:       corev1.PersistentVolumeClaimSpec{AccessModes: []corev1.PersistentVolumeAccessMode{corev1.ReadWriteOnce}, Resources: corev1.VolumeResourceRequirements{Requests: corev1.ResourceList{corev1.ResourceStorage: resource.MustParse("1Gi")}}, StorageClassName: new("")},
+		Namespace: "app",
+		Name:      "restored",
+		Labels:    map[string]string{EnabledLabel: "true"},
+		Spec: corev1.PersistentVolumeClaimSpec{
+			AccessModes: []corev1.PersistentVolumeAccessMode{corev1.ReadWriteOnce},
+			Resources: corev1.VolumeResourceRequirements{
+				Requests: requests,
+			},
+			StorageClassName: new(""),
+		},
 	}
 	if err := c.Create(ctx, pvc); err != nil {
 		t.Fatal(err)
 	}
+
+	return volume, untouched, pvc
+}
+
+// startDisposableReconciler starts the controller manager for the scenario.
+func startDisposableReconciler(
+	ctx context.Context,
+	t *testing.T,
+	apiConfig *rest.Config,
+	scheme *runtime.Scheme,
+) (*Metrics, *Reconciler) {
+	t.Helper()
 	mgr, err := ctrl.NewManager(apiConfig, ctrl.Options{
-		Scheme: scheme, Metrics: metricsserver.Options{BindAddress: "0"}, HealthProbeBindAddress: "0",
-		Cache: cache.Options{ReaderFailOnMissingInformer: true, ByObject: map[client.Object]cache.ByObject{
-			Resource(VolumeGVK):       {Namespaces: map[string]cache.Config{"storage": {}}},
-			Resource(BackupTargetGVK): {Namespaces: map[string]cache.Config{"storage": {}}},
-		}},
+		Scheme:                 scheme,
+		Metrics:                metricsserver.Options{BindAddress: "0"},
+		HealthProbeBindAddress: "0",
+		Cache: cache.Options{
+			ReaderFailOnMissingInformer: true,
+			ByObject: map[client.Object]cache.ByObject{
+				Resource(VolumeGVK):       {Namespaces: map[string]cache.Config{"storage": {}}},
+				Resource(BackupTargetGVK): {Namespaces: map[string]cache.Config{"storage": {}}},
+			},
+		},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -119,25 +195,80 @@ func TestDisposableAPIServer(t *testing.T) {
 			t.Error("manager did not shut down")
 		}
 	})
-	waitFor(t, func() bool { return testutil.ToFloat64(m.Reconciles.WithLabelValues("enabled")) > 0 }, "initial pending claim reconciliation")
-	assertSettings := func(target string, replicas int64) bool {
-		v := Resource(VolumeGVK)
-		if err := c.Get(ctx, client.ObjectKeyFromObject(volume), v); err != nil {
-			return false
-		}
-		targetValue, _, _ := unstructured.NestedString(v.Object, "spec", "backupTargetName")
-		count, _, _ := unstructured.NestedInt64(v.Object, "spec", "numberOfReplicas")
-		return targetValue == target && count == replicas
+
+	return m, r
+}
+
+// assertVolumeSettings reports whether the volume has the expected settings.
+func assertVolumeSettings(
+	ctx context.Context,
+	t *testing.T,
+	c client.Client,
+	volume *unstructured.Unstructured,
+	target string,
+	replicas int64,
+) bool {
+	t.Helper()
+	v := Resource(VolumeGVK)
+	if err := c.Get(ctx, client.ObjectKeyFromObject(volume), v); err != nil {
+		return false
 	}
-	if !assertSettings("default", 1) {
-		t.Fatal("pending claim changed volume")
+	targetValue, _, _ := unstructured.NestedString(v.Object, "spec", "backupTargetName")
+	count, _, _ := unstructured.NestedInt64(v.Object, "spec", "numberOfReplicas")
+
+	return targetValue == target && count == replicas
+}
+
+// updateClaimMetadata replaces the claim labels and annotations.
+func updateClaimMetadata(
+	ctx context.Context,
+	t *testing.T,
+	c client.Client,
+	pvc *corev1.PersistentVolumeClaim,
+	keys map[string]string,
+) {
+	t.Helper()
+	if err := c.Get(ctx, client.ObjectKeyFromObject(pvc), pvc); err != nil {
+		t.Fatal(err)
 	}
-	pv := &corev1.PersistentVolume{ObjectMeta: metav1.ObjectMeta{Name: "restored-pv"}, Spec: corev1.PersistentVolumeSpec{
-		Capacity: corev1.ResourceList{corev1.ResourceStorage: resource.MustParse("1Gi")}, AccessModes: []corev1.PersistentVolumeAccessMode{corev1.ReadWriteOnce},
-		PersistentVolumeReclaimPolicy: corev1.PersistentVolumeReclaimRetain,
-		ClaimRef:                      &corev1.ObjectReference{Namespace: pvc.Namespace, Name: pvc.Name, UID: pvc.UID},
-		PersistentVolumeSource:        corev1.PersistentVolumeSource{CSI: &corev1.CSIPersistentVolumeSource{Driver: LonghornDriver, VolumeHandle: volume.GetName()}},
-	}}
+	pvc.Labels, pvc.Annotations = splitMetadata(keys)
+	if err := c.Update(ctx, pvc); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// bindDisposableClaim binds the pending claim through a real PV.
+func bindDisposableClaim(
+	ctx context.Context,
+	t *testing.T,
+	c client.Client,
+	volume *unstructured.Unstructured,
+	pvc *corev1.PersistentVolumeClaim,
+) {
+	t.Helper()
+	capacity := make(corev1.ResourceList)
+	capacity[corev1.ResourceStorage] = resource.MustParse("1Gi")
+	pv := &corev1.PersistentVolume{
+		Name: "restored-pv",
+		Spec: corev1.PersistentVolumeSpec{
+			Capacity: capacity,
+			AccessModes: []corev1.PersistentVolumeAccessMode{
+				corev1.ReadWriteOnce,
+			},
+			PersistentVolumeReclaimPolicy: corev1.PersistentVolumeReclaimRetain,
+			ClaimRef: &corev1.ObjectReference{
+				Namespace: pvc.Namespace,
+				Name:      pvc.Name,
+				UID:       pvc.UID,
+			},
+			PersistentVolumeSource: corev1.PersistentVolumeSource{
+				CSI: &corev1.CSIPersistentVolumeSource{
+					Driver:       LonghornDriver,
+					VolumeHandle: volume.GetName(),
+				},
+			},
+		},
+	}
 	if err := c.Create(ctx, pv); err != nil {
 		t.Fatal(err)
 	}
@@ -153,36 +284,81 @@ func TestDisposableAPIServer(t *testing.T) {
 	if err := c.Status().Update(ctx, pvc); err != nil {
 		t.Fatal(err)
 	}
-	waitFor(t, func() bool { return assertSettings("rustfs", 2) }, "binding event and restored handle")
-	updateMetadata := func(keys map[string]string) {
-		t.Helper()
-		if err := c.Get(ctx, client.ObjectKeyFromObject(pvc), pvc); err != nil {
-			t.Fatal(err)
-		}
-		pvc.Labels, pvc.Annotations = splitMetadata(keys)
-		if err := c.Update(ctx, pvc); err != nil {
-			t.Fatal(err)
-		}
-	}
-	updateMetadata(map[string]string{EnabledLabel: "true", BackupTargetAnnotation: "default", ReplicasAnnotation: "3"})
-	waitFor(t, func() bool { return assertSettings("default", 3) }, "override annotation event")
-	updateMetadata(map[string]string{EnabledLabel: "true"})
-	waitFor(t, func() bool { return assertSettings("rustfs", 2) }, "override removal event")
+	waitFor(
+		t,
+		func() bool { return assertVolumeSettings(ctx, t, c, volume, "rustfs", 2) },
+		"binding event and restored handle",
+	)
+}
+
+// disposableAnnotationsPhase walks override and optional-field annotations.
+func disposableAnnotationsPhase(
+	ctx context.Context,
+	t *testing.T,
+	c client.Client,
+	volume *unstructured.Unstructured,
+	pvc *corev1.PersistentVolumeClaim,
+	m *Metrics,
+) {
+	t.Helper()
+	updateClaimMetadata(ctx, t, c, pvc,
+		map[string]string{
+			EnabledLabel:           "true",
+			BackupTargetAnnotation: "default",
+			ReplicasAnnotation:     "3",
+		},
+	)
+	waitFor(
+		t,
+		func() bool { return assertVolumeSettings(ctx, t, c, volume, "default", 3) },
+		"override annotation event",
+	)
+	updateClaimMetadata(ctx, t, c, pvc, map[string]string{EnabledLabel: "true"})
+	waitFor(
+		t,
+		func() bool { return assertVolumeSettings(ctx, t, c, volume, "rustfs", 2) },
+		"override removal event",
+	)
 	// Every optional field must pass the real Longhorn schema with the patched type.
 	optional := map[string]string{
-		EnabledLabel: "true", DataLocalityAnnotation: "best-effort", ReplicaAutoBalanceAnnotation: "least-effort",
-		ReplicaSoftAntiAffinityAnnotation: "enabled", ReplicaZoneSoftAntiAffinityAnnotation: "disabled", ReplicaDiskSoftAntiAffinityAnnotation: "ignored",
-		SnapshotDataIntegrityAnnotation: "fast-check", UnmapMarkSnapChainRemovedAnnotation: "enabled", OfflineRebuildingAnnotation: "enabled",
-		FreezeFilesystemForSnapshotAnnotation: "disabled", SnapshotMaxCountAnnotation: "100", SnapshotMaxSizeAnnotation: "4Gi",
-		RebuildConcurrentSyncLimitAnnotation: "3", ReplicaRebuildingBandwidthLimitAnnotation: "0", UblkQueueDepthAnnotation: "64", UblkNumberOfQueueAnnotation: "2",
+		EnabledLabel:                              "true",
+		DataLocalityAnnotation:                    "best-effort",
+		ReplicaAutoBalanceAnnotation:              "least-effort",
+		ReplicaSoftAntiAffinityAnnotation:         "enabled",
+		ReplicaZoneSoftAntiAffinityAnnotation:     "disabled",
+		ReplicaDiskSoftAntiAffinityAnnotation:     "ignored",
+		SnapshotDataIntegrityAnnotation:           "fast-check",
+		UnmapMarkSnapChainRemovedAnnotation:       "enabled",
+		OfflineRebuildingAnnotation:               "enabled",
+		FreezeFilesystemForSnapshotAnnotation:     "disabled",
+		SnapshotMaxCountAnnotation:                "100",
+		SnapshotMaxSizeAnnotation:                 "4Gi",
+		RebuildConcurrentSyncLimitAnnotation:      "3",
+		ReplicaRebuildingBandwidthLimitAnnotation: "0",
+		UblkQueueDepthAnnotation:                  "64",
+		UblkNumberOfQueueAnnotation:               "2",
 	}
-	updateMetadata(optional)
+	updateClaimMetadata(ctx, t, c, pvc, optional)
 	wantOptional := map[string]any{
-		"dataLocality": "best-effort", "replicaAutoBalance": "least-effort", "replicaSoftAntiAffinity": "enabled",
-		"replicaZoneSoftAntiAffinity": "disabled", "replicaDiskSoftAntiAffinity": "ignored", "snapshotDataIntegrity": "fast-check",
-		"unmapMarkSnapChainRemoved": "enabled", "offlineRebuilding": "enabled", "freezeFilesystemForSnapshot": "disabled",
-		"snapshotMaxCount": int64(100), "snapshotMaxSize": "4294967296", "rebuildConcurrentSyncLimit": int64(3),
-		"replicaRebuildingBandwidthLimit": int64(0), "ublkQueueDepth": int64(64), "ublkNumberOfQueue": int64(2),
+		"dataLocality":                "best-effort",
+		"replicaAutoBalance":          "least-effort",
+		"replicaSoftAntiAffinity":     "enabled",
+		"replicaZoneSoftAntiAffinity": "disabled",
+		"replicaDiskSoftAntiAffinity": "ignored",
+		"snapshotDataIntegrity":       "fast-check",
+		"unmapMarkSnapChainRemoved":   "enabled",
+		"offlineRebuilding":           "enabled",
+		"freezeFilesystemForSnapshot": "disabled",
+		"snapshotMaxCount": int64(
+			100,
+		),
+		"snapshotMaxSize":            "4294967296",
+		"rebuildConcurrentSyncLimit": int64(3),
+		"replicaRebuildingBandwidthLimit": int64(
+			0,
+		),
+		"ublkQueueDepth":    int64(64),
+		"ublkNumberOfQueue": int64(2),
 	}
 	waitFor(t, func() bool {
 		v := Resource(VolumeGVK)
@@ -201,25 +377,56 @@ func TestDisposableAPIServer(t *testing.T) {
 			t.Fatalf("%s patch errors: %v", field, got)
 		}
 	}
-	updateMetadata(map[string]string{EnabledLabel: "true"})
+	updateClaimMetadata(ctx, t, c, pvc, map[string]string{EnabledLabel: "true"})
+}
+
+// disposableDriftPhase covers Longhorn drift, backup-target events, the
+// disable path and the strict-local detach sequence.
+func disposableDriftPhase(
+	ctx context.Context,
+	t *testing.T,
+	c client.Client,
+	volume, untouched *unstructured.Unstructured,
+	pvc *corev1.PersistentVolumeClaim,
+	m *Metrics,
+	r *Reconciler,
+) {
+	t.Helper()
 	if err := c.Get(ctx, client.ObjectKeyFromObject(volume), volume); err != nil {
 		t.Fatal(err)
 	}
 	stale := volume.DeepCopy()
-	unstructured.SetNestedField(volume.Object, "concurrent-node", "spec", "nodeID")
-	unstructured.SetNestedField(volume.Object, int64(4), "spec", "numberOfReplicas")
+	_ = unstructured.SetNestedField(volume.Object, "concurrent-node", "spec", "nodeID")
+	_ = unstructured.SetNestedField(volume.Object, int64(4), "spec", "numberOfReplicas")
 	if err := c.Update(ctx, volume); err != nil {
 		t.Fatal(err)
 	}
 	base := stale.DeepCopy()
-	unstructured.SetNestedField(stale.Object, "default", "spec", "backupTargetName")
-	if err := c.Patch(ctx, stale, client.MergeFromWithOptions(base, client.MergeFromWithOptimisticLock{})); !apierrors.IsConflict(err) {
+	_ = unstructured.SetNestedField(stale.Object, "default", "spec", "backupTargetName")
+	if err := c.Patch(
+		ctx,
+		stale,
+		client.MergeFromWithOptions(base, client.MergeFromWithOptimisticLock{}),
+	); !kerror.IsConflict(
+		err,
+	) {
 		t.Fatalf("expected real resourceVersion conflict, got %v", err)
 	}
-	waitFor(t, func() bool { return assertSettings("rustfs", 2) }, "Longhorn drift event")
-	updateMetadata(map[string]string{EnabledLabel: "true", BackupTargetAnnotation: "later", ReplicasAnnotation: "3"})
+	waitFor(
+		t,
+		func() bool { return assertVolumeSettings(ctx, t, c, volume, "rustfs", 2) },
+		"Longhorn drift event",
+	)
+	updateClaimMetadata(ctx, t, c, pvc,
+		map[string]string{
+			EnabledLabel:           "true",
+			BackupTargetAnnotation: "later",
+			ReplicasAnnotation:     "3",
+		},
+	)
 	waitFor(t, func() bool {
-		return assertSettings("rustfs", 3) && testutil.ToFloat64(m.Fields.WithLabelValues("backupTargetName", "invalid")) > 0
+		return assertVolumeSettings(ctx, t, c, volume, "rustfs", 3) &&
+			testutil.ToFloat64(m.Fields.WithLabelValues("backupTargetName", "invalid")) > 0
 	}, "independent invalid target")
 	target := Resource(BackupTargetGVK)
 	target.SetNamespace("storage")
@@ -227,7 +434,26 @@ func TestDisposableAPIServer(t *testing.T) {
 	if err := c.Create(ctx, target); err != nil {
 		t.Fatal(err)
 	}
-	waitFor(t, func() bool { return assertSettings("later", 3) }, "backup target creation event")
+	waitFor(
+		t,
+		func() bool { return assertVolumeSettings(ctx, t, c, volume, "later", 3) },
+		"backup target creation event",
+	)
+	disposableTargetWatchPhase(ctx, t, c, volume, pvc, m)
+	disposableDisablePhase(ctx, t, c, volume, untouched, pvc, r)
+	disposableStrictLocalPhase(ctx, t, c, volume, pvc, m)
+}
+
+// disposableTargetWatchPhase covers default-target removal and recreation.
+func disposableTargetWatchPhase(
+	ctx context.Context,
+	t *testing.T,
+	c client.Client,
+	volume *unstructured.Unstructured,
+	pvc *corev1.PersistentVolumeClaim,
+	m *Metrics,
+) {
+	t.Helper()
 	// Removing and recreating the default target must wake claims that inherit
 	// it. Replicas already match, so no unrelated volume patch can mask a
 	// missing target watch; the five-minute resync is longer than the wait.
@@ -238,36 +464,78 @@ func TestDisposableAPIServer(t *testing.T) {
 		t.Fatal(err)
 	}
 	invalidBefore := testutil.ToFloat64(m.Fields.WithLabelValues("backupTargetName", "invalid"))
-	updateMetadata(map[string]string{EnabledLabel: "true", ReplicasAnnotation: "3"})
+	updateClaimMetadata(
+		ctx,
+		t,
+		c,
+		pvc,
+		map[string]string{EnabledLabel: "true", ReplicasAnnotation: "3"},
+	)
 	waitFor(t, func() bool {
-		return assertSettings("later", 3) && testutil.ToFloat64(m.Fields.WithLabelValues("backupTargetName", "invalid")) > invalidBefore
+		return assertVolumeSettings(ctx, t, c, volume, "later", 3) &&
+			testutil.ToFloat64(
+				m.Fields.WithLabelValues("backupTargetName", "invalid"),
+			) > invalidBefore
 	}, "missing inherited default target")
 	if err := c.Create(ctx, defaultTarget); err != nil {
 		t.Fatal(err)
 	}
-	waitFor(t, func() bool { return assertSettings("rustfs", 3) }, "inherited default target recreation event")
-	updateMetadata(map[string]string{EnabledLabel: "false", BackupTargetAnnotation: "default", ReplicasAnnotation: "1"})
+	waitFor(
+		t,
+		func() bool { return assertVolumeSettings(ctx, t, c, volume, "rustfs", 3) },
+		"inherited default target recreation event",
+	)
+}
+
+// disposableDisablePhase covers the disable path and its no-op guarantees.
+func disposableDisablePhase(
+	ctx context.Context,
+	t *testing.T,
+	c client.Client,
+	volume, untouched *unstructured.Unstructured,
+	pvc *corev1.PersistentVolumeClaim,
+	r *Reconciler,
+) {
+	t.Helper()
+	updateClaimMetadata(ctx, t, c, pvc,
+		map[string]string{
+			EnabledLabel:           "false",
+			BackupTargetAnnotation: "default",
+			ReplicasAnnotation:     "1",
+		},
+	)
 	if err := c.Get(ctx, client.ObjectKeyFromObject(volume), volume); err != nil {
 		t.Fatal(err)
 	}
-	unstructured.SetNestedField(volume.Object, int64(4), "spec", "numberOfReplicas")
+	_ = unstructured.SetNestedField(volume.Object, int64(4), "spec", "numberOfReplicas")
 	if err := c.Update(ctx, volume); err != nil {
 		t.Fatal(err)
 	}
 	// Force a queued reconcile as well as allowing the volume watch to observe disabling.
-	if _, err := r.Reconcile(ctx, ctrl.Request{NamespacedName: client.ObjectKeyFromObject(pvc)}); err != nil {
+	if _, err := r.Reconcile(
+		ctx,
+		ctrl.Request{NamespacedName: client.ObjectKeyFromObject(pvc)},
+	); err != nil {
 		t.Fatal(err)
 	}
-	if !assertSettings("rustfs", 4) {
+	if !assertVolumeSettings(ctx, t, c, volume, "rustfs", 4) {
 		t.Fatal("disabled claim enforced settings")
 	}
 	if err := c.Get(ctx, client.ObjectKeyFromObject(volume), volume); err != nil {
 		t.Fatal(err)
 	}
-	if node, _, _ := unstructured.NestedString(volume.Object, "spec", "nodeID"); node != "concurrent-node" {
+	if node, _, _ := unstructured.NestedString(
+		volume.Object,
+		"spec",
+		"nodeID",
+	); node != "concurrent-node" {
 		t.Fatal("unrelated field changed")
 	}
-	if source, _, _ := unstructured.NestedString(volume.Object, "spec", "fromBackup"); source != "s3://existing-backup" {
+	if source, _, _ := unstructured.NestedString(
+		volume.Object,
+		"spec",
+		"fromBackup",
+	); source != "s3://existing-backup" {
 		t.Fatal("restored-volume source changed")
 	}
 	if err := c.Get(ctx, client.ObjectKeyFromObject(untouched), untouched); err != nil {
@@ -276,16 +544,34 @@ func TestDisposableAPIServer(t *testing.T) {
 	if n, _, _ := unstructured.NestedInt64(untouched.Object, "spec", "numberOfReplicas"); n != 1 {
 		t.Fatal("unlabelled volume changed")
 	}
+}
 
+// disposableStrictLocalPhase covers the strict-local detach sequence.
+func disposableStrictLocalPhase(
+	ctx context.Context,
+	t *testing.T,
+	c client.Client,
+	volume *unstructured.Unstructured,
+	pvc *corev1.PersistentVolumeClaim,
+	m *Metrics,
+) {
+	t.Helper()
 	volume.Object["status"] = map[string]any{"state": "attached"}
 	if err := c.Status().Update(ctx, volume); err != nil {
 		t.Fatal(err)
 	}
 	invalidLocality := m.Fields.WithLabelValues("dataLocality", "invalid")
 	invalidLocalityBefore := testutil.ToFloat64(invalidLocality)
-	updateMetadata(map[string]string{EnabledLabel: "true", ReplicasAnnotation: "1", DataLocalityAnnotation: "strict-local"})
+	updateClaimMetadata(ctx, t, c, pvc,
+		map[string]string{
+			EnabledLabel:           "true",
+			ReplicasAnnotation:     "1",
+			DataLocalityAnnotation: "strict-local",
+		},
+	)
 	waitFor(t, func() bool {
-		return assertSettings("rustfs", 1) && testutil.ToFloat64(invalidLocality) > invalidLocalityBefore
+		return assertVolumeSettings(ctx, t, c, volume, "rustfs", 1) &&
+			testutil.ToFloat64(invalidLocality) > invalidLocalityBefore
 	}, "strict-local request held while attached")
 	if err := c.Get(ctx, client.ObjectKeyFromObject(volume), volume); err != nil {
 		t.Fatal(err)

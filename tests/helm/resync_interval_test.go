@@ -33,15 +33,26 @@ func TestChartResyncInterval(t *testing.T) {
 				t.Fatalf("controller validation = %v, valid = %v", startupErr, tc.valid)
 			}
 
-			output, err := exec.CommandContext(t.Context(), helm, "template", "hornkeeper", "../../charts/hornkeeper", "--set-string", "controller.resyncInterval="+tc.interval).CombinedOutput()
+			output, err := exec.CommandContext(t.Context(), helm, "template", "hornkeeper", "../../charts/hornkeeper", "--set-string", "controller.resyncInterval="+tc.interval).
+				CombinedOutput()
 			if tc.valid {
-				if err != nil || !bytes.Contains(output, []byte(`"--resync-interval=`+tc.interval+`"`)) {
-					t.Fatalf("expected Helm to pass through interval %q, got %v\n%s", tc.interval, err, output)
+				if err != nil ||
+					!bytes.Contains(output, []byte(`"--resync-interval=`+tc.interval+`"`)) {
+					t.Fatalf(
+						"expected Helm to pass through interval %q, got %v\n%s",
+						tc.interval,
+						err,
+						output,
+					)
 				}
 				return
 			}
 			if err == nil {
-				t.Fatalf("Helm accepted interval %q, which fails controller startup: %v", tc.interval, startupErr)
+				t.Fatalf(
+					"Helm accepted interval %q, which fails controller startup: %v",
+					tc.interval,
+					startupErr,
+				)
 			}
 			if !bytes.Contains(output, []byte("resyncInterval")) {
 				t.Fatalf("expected an error identifying controller.resyncInterval, got %s", output)

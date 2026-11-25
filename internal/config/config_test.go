@@ -6,7 +6,8 @@ import (
 )
 
 func TestValidate(t *testing.T) {
-	if err := Default().Validate(); err != nil {
+	cfg := Default()
+	if err := cfg.Validate(); err != nil {
 		t.Fatal(err)
 	}
 	for _, tc := range []struct {
